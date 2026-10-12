@@ -261,6 +261,7 @@ void Qwen3Decoder::read_cache(int layer, std::vector<float> & keys, std::vector<
 void Qwen3Decoder::resize_cache(int64_t positions) {
     // The kept step reads the cache it was built on.
     token_step_.reset();
+    chain_.reset();
     auto next = std::make_unique<Cache>(backend_, cache_type_, shape_, positions, flash_);
     // On the device, layer by layer, the positions so far are copied into the new buffer and, for flash attention, the
     // others are set to zero: flash attention reads the positions of the last block past the sequence, which its mask
@@ -494,29 +495,47 @@ void Qwen3Decoder::step(int32_t id, ggml_tensor * table, ggml_tensor * head) {
     n_past_ += 1;
 }
 
-std::vector<int32_t> Qwen3Decoder::chain(int64_t first_rows, const Qwen3Rows & first, int steps, const std::function<ggml_tensor *(int)> & head,
-                                         const std::function<ggml_tensor *(Graph &, int, ggml_tensor *)> & next) {
-    make_room(first_rows + steps - 1);
-    Graph g(kGraphSize * 4);
-    ggml_tensor * x = first(g, 0, first_rows);
-    int64_t rows = first_rows;
+/** A chain's graph, kept to be computed again while the cache it was built on stays. */
+struct Qwen3Decoder::Chain {
+    Graph graph{kGraphSize * 4};
+    ggml_gallocr_t allocr;
     std::vector<ggml_tensor *> ids;
-    for (int s = 0; s < steps; s++) {
-        RunInputs inputs;
-        ggml_tensor * y = layers(g, x, rows, true, inputs);
-        ggml_tensor * hidden = nullptr, * logits = nullptr;
-        outputs(g, ggml_view_2d(g.ctx(), y, shape_.hidden, 1, y->nb[1], (rows - 1) * y->nb[1]), head(s), hidden, logits);
-        ggml_tensor * id = ggml_argmax(g.ctx(), logits);
-        g.output(id);
-        ids.push_back(id);
-        n_past_ += rows;
-        if (s + 1 < steps) {
-            x = next(g, s, id);
-            rows = 1;
+    const void * cache;
+    explicit Chain(ggml_backend_t backend, const void * cache) : allocr(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))), cache(cache) {}
+    ~Chain() { ggml_gallocr_free(allocr); }
+};
+
+std::vector<int32_t> Qwen3Decoder::chain(int64_t first_rows, const Qwen3Rows & first, int steps, const std::function<ggml_tensor *(int)> & head,
+                                         const std::function<ggml_tensor *(Graph &, int, ggml_tensor *)> & next,
+                                         const std::function<void(Graph &)> & refill) {
+    make_room(first_rows + steps - 1);
+    static const bool keep = std::getenv("SPEECH_CP_CHAIN_KEEP") != nullptr;
+    if (keep && refill && chain_ && chain_->cache == cache_.get() && n_past_ == 0) {
+        refill(chain_->graph);
+        chain_->graph.compute_again(backend_);
+        n_past_ += first_rows + steps - 1;
+    } else {
+        chain_ = std::make_unique<Chain>(backend_, cache_.get());
+        Graph & g = chain_->graph;
+        ggml_tensor * x = first(g, 0, first_rows);
+        int64_t rows = first_rows;
+        for (int s = 0; s < steps; s++) {
+            RunInputs inputs;
+            ggml_tensor * y = layers(g, x, rows, true, inputs);
+            ggml_tensor * hidden = nullptr, * logits = nullptr;
+            outputs(g, ggml_view_2d(g.ctx(), y, shape_.hidden, 1, y->nb[1], (rows - 1) * y->nb[1]), head(s), hidden, logits);
+            ggml_tensor * id = ggml_argmax(g.ctx(), logits);
+            g.output(id);
+            chain_->ids.push_back(id);
+            n_past_ += rows;
+            if (s + 1 < steps) {
+                x = next(g, s, id);
+                rows = 1;
+            }
         }
+        g.compute(backend_, chain_->allocr);
     }
-    g.compute(backend_, allocr_);
-    std::vector<int32_t> out(ids.size());
-    for (size_t i = 0; i < ids.size(); i++) ggml_backend_tensor_get(ids[i], &out[i], 0, sizeof(int32_t));
+    std::vector<int32_t> out(chain_->ids.size());
+    for (size_t i = 0; i < out.size(); i++) ggml_backend_tensor_get(chain_->ids[i], &out[i], 0, sizeof(int32_t));
     return out;
 }

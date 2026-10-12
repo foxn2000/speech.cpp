@@ -139,7 +139,8 @@ public:
      * logits under `head(step)`. Returns the ids.
      */
     std::vector<int32_t> chain(int64_t first_rows, const Qwen3Rows & first, int steps, const std::function<ggml_tensor *(int)> & head,
-                               const std::function<ggml_tensor *(Graph &, int, ggml_tensor *)> & next);
+                               const std::function<ggml_tensor *(Graph &, int, ggml_tensor *)> & next,
+                               const std::function<void(Graph &)> & refill = {});
 
     const std::vector<float> & hidden() const { return hidden_; }
     /** Whether run() reads the last row's hidden state back; a caller that never asks for hidden() turns it off. */
@@ -158,6 +159,7 @@ public:
 private:
     struct Cache;
     struct TokenStep;
+    struct Chain;
 
     /** The inputs of a run's graph that depend on where its rows are in the sequence. */
     struct RunInputs {
@@ -192,6 +194,7 @@ private:
 
     std::unique_ptr<Cache> cache_;
     std::unique_ptr<TokenStep> token_step_;
+    std::unique_ptr<Chain> chain_;
     ggml_gallocr_t allocr_ = nullptr;
     int64_t positions_ = 0;
     int64_t n_past_ = 0;

@@ -63,6 +63,7 @@ private:
     int cp_vocab_ = 0;
     Qwen3Decoder talker_, cp_;
     bool cp_projected_ = false;
+    ggml_tensor * chain_code0_ = nullptr, * chain_hidden_ = nullptr;
     /** The allocator of the embedding graphs; each decoder has its own. */
     ggml_gallocr_t allocr_ = nullptr;
 };

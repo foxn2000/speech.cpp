@@ -126,11 +126,16 @@ std::vector<int32_t> Talker::cp_greedy_frame(int32_t code0) {
         2,
         [&](Graph & g, int64_t, int64_t) {
             ggml_context * ctx = g.ctx();
-            ggml_tensor * id = g.input(std::vector<int32_t>{code0}, 1);
-            return project(ctx, ggml_concat(ctx, g.input(talker_.hidden(), hidden(), 1), ggml_get_rows(ctx, m.tensor("talker.codec_embd"), id), 1));
+            chain_code0_ = g.input(std::vector<int32_t>{code0}, 1);
+            chain_hidden_ = g.input(talker_.hidden(), hidden(), 1);
+            return project(ctx, ggml_concat(ctx, chain_hidden_, ggml_get_rows(ctx, m.tensor("talker.codec_embd"), chain_code0_), 1));
         },
         n_groups_ - 1, [&](int s) { return m.tensor("cp.head." + std::to_string(s)); },
         [&](Graph & g, int s, ggml_tensor * id) {
             return project(g.ctx(), ggml_get_rows(g.ctx(), m.tensor("cp.codec_embd." + std::to_string(s)), id));
+        },
+        [&](Graph & g) {
+            g.set(chain_code0_, std::vector<int32_t>{code0});
+            g.set(chain_hidden_, talker_.hidden());
         });
 }
