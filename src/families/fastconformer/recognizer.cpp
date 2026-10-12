@@ -1,5 +1,6 @@
 #include "recognizer.h"
 
+#include <cstdlib>
 #include <stdexcept>
 
 #include "error.h"
@@ -33,7 +34,12 @@ Recognizer::Recognizer(const std::string & path, ggml_backend_t backend)
       breaks_(model_.str_array("fastconformer.segment.breaks")),
       allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {
     if (!allocr_) throw Error(Fault::OutOfMemory, "cannot create a graph allocator");
+    if (std::getenv("SPEECH_FC_CPU_COPY")) cpu_ = std::make_unique<CpuDecoding>(path, decoding_names_);
 }
+
+Recognizer::CpuDecoding::CpuDecoding(const std::string & path, const std::vector<std::string> & names)
+    : backend(ggml_backend_cpu_init()), model(path, backend, layout), prediction(model), joint(model),
+      decoders(make_decoders(model, prediction, joint, names)) {}
 
 Recognizer::~Recognizer() {
     ggml_gallocr_free(allocr_);

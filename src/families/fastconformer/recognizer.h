@@ -49,6 +49,11 @@ public:
      * `name`, telling `progress` how far it has come.
      */
     Decoding decoding(const std::vector<float> & projected, const std::string & name, const DecodingProgress & progress = {}) const {
+        if (cpu_) {
+            for (size_t i = 0; i < decoding_names_.size(); i++) {
+                if (decoding_names_[i] == name) return cpu_->decoders[i]->decode(projected, cpu_->backend, progress);
+            }
+        }
         static ggml_backend_t cpu = std::getenv("SPEECH_FC_CPU_DECODE") ? ggml_backend_cpu_init() : nullptr;
         return decoder(name).decode(projected, cpu ? cpu : backend_, progress);
     }
@@ -83,6 +88,16 @@ public:
     const Detokenizer & detokenizer() const { return detokenizer_; }
 
 private:
+    /** A second copy of the model in the CPU's memory, whose prediction network and joint decode on the CPU. */
+    struct CpuDecoding {
+        ggml_backend_t backend;
+        ModelFile model;
+        PredictionNetwork prediction;
+        Joint joint;
+        std::vector<std::unique_ptr<Decoder>> decoders;
+        CpuDecoding(const std::string & path, const std::vector<std::string> & names);
+    };
+    std::unique_ptr<CpuDecoding> cpu_;
     ggml_backend_t backend_;
     ModelFile model_;
     Frontend frontend_;
