@@ -1,5 +1,6 @@
 #include "fft.h"
 
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 
@@ -33,6 +34,16 @@ void Fft::work(const std::complex<double> * in, std::complex<double> * out, size
         else work(in + j * stride, out + j * m, stride * p, level + 1);
     }
     // X[k + s m] = Σ_j exp(-2πi j (k + s m) / n) Y_j[k], where exp(-2πi e / n) is twiddle e × stride.
+    static const bool plain = std::getenv("SPEECH_FFT_PLAIN") != nullptr;
+    if (p == 2 && plain) {
+        for (size_t k = 0; k < m; k++) {
+            const double ar = out[k].real(), ai = out[k].imag(), br = out[m + k].real(), bi = out[m + k].imag();
+            const std::complex<double> t0 = twiddles_[stride * k], t1 = twiddles_[stride * (k + m)];
+            out[k] = {ar + (br * t0.real() - bi * t0.imag()), ai + (br * t0.imag() + bi * t0.real())};
+            out[m + k] = {ar + (br * t1.real() - bi * t1.imag()), ai + (br * t1.imag() + bi * t1.real())};
+        }
+        return;
+    }
     if (p == 2) {
         for (size_t k = 0; k < m; k++) {
             const auto a = out[k];
