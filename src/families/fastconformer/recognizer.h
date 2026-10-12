@@ -1,5 +1,9 @@
 #pragma once
 
+#include <cstdlib>
+
+#include "ggml-cpu.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -45,7 +49,8 @@ public:
      * `name`, telling `progress` how far it has come.
      */
     Decoding decoding(const std::vector<float> & projected, const std::string & name, const DecodingProgress & progress = {}) const {
-        return decoder(name).decode(projected, backend_, progress);
+        static ggml_backend_t cpu = std::getenv("SPEECH_FC_CPU_DECODE") ? ggml_backend_cpu_init() : nullptr;
+        return decoder(name).decode(projected, cpu ? cpu : backend_, progress);
     }
     /** The same with the default decoding. */
     Decoding decoding(const std::vector<float> & projected) const { return decoding(projected, decodings().front()); }

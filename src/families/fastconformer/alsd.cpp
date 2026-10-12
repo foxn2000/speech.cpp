@@ -1,6 +1,9 @@
 #include "alsd.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstdio>
+#include <chrono>
 #include <cmath>
 #include <map>
 #include <memory>
@@ -66,7 +69,11 @@ Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_
     // The frame the search has passed for every hypothesis, which only rises.
     int64_t passed = 0;
     size_t graphs = 0;
+    using clock = std::chrono::steady_clock;
+    double t_build = 0, t_compute = 0, t_read = 0, t_cpu = 0;
+    auto sec = [](clock::time_point a, clock::time_point b) { return std::chrono::duration<double>(b - a).count(); };
     for (int64_t i = 0; i < frames + max_labels; i++) {
+        const auto t0 = clock::now();
         Hypotheses active;
         std::vector<int64_t> at;
         for (const auto & h : beam_hyps) {
@@ -106,13 +113,16 @@ Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_
         }
         ggml_tensor * logits = joint_.build(g.ctx(), g.input(f, hidden, (int64_t) n), joint_.project_prediction(g.ctx(), columns));
         g.output(logits);
+        const auto t1 = clock::now();
         g.compute(backend, allocr.get());
+        const auto t2 = clock::now();
         graphs++;
         for (const auto & c : computed) {
             predictions[c.first] = std::make_shared<const Prediction>(Prediction{Graph::read(c.second.output), PredictionNetwork::read_state(c.second)});
             cache[active[c.first]->labels] = predictions[c.first];
         }
         const std::vector<float> out = Graph::read(logits);
+        const auto t3 = clock::now();
 
         Hypotheses expanded;
         for (size_t j = 0; j < n; j++) {
@@ -158,6 +168,11 @@ Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_
             if (it != cache.end()) kept.insert(*it);
         }
         cache.swap(kept);
+        const auto t4 = clock::now();
+        t_build += sec(t0, t1); t_compute += sec(t1, t2); t_read += sec(t2, t3); t_cpu += sec(t3, t4);
+    }
+    if (std::getenv("SPEECH_ALSD_TIMES")) {
+        std::fprintf(stderr, "alsd steps %zu ms: build %.2f compute %.2f read %.2f cpu %.2f\n", graphs, 1e3 * t_build, 1e3 * t_compute, 1e3 * t_read, 1e3 * t_cpu);
     }
 
     const Hypotheses & candidates = finished.empty() ? beam_hyps : finished;

@@ -54,6 +54,15 @@ struct Convolutions {
         } else {
             const int64_t p = (k_width - 1) * dilation / 2;
             ggml_tensor * xp = pad(x, p, p);
+            static const bool im2col = std::getenv("SPEECH_IRODORI_IM2COL") != nullptr;
+            if (im2col) {
+                // Weight [k, in, out] and data [time, in], as ggml_im2col takes them; its columns are [in * k, t].
+                ggml_tensor * wk = ggml_cont(ctx(), ggml_permute(ctx(), w, 1, 2, 0, 3));
+                ggml_tensor * xt = ggml_cont(ctx(), ggml_transpose(ctx(), xp));
+                ggml_tensor * cols = ggml_im2col(ctx(), wk, xt, 1, 0, 0, 0, dilation, 0, false, GGML_TYPE_F32);
+                y = mul_mat(ctx(), ggml_reshape_2d(ctx(), wk, k_width * in, out), ggml_reshape_2d(ctx(), cols, k_width * in, t));
+                return ggml_add(ctx(), y, m.tensor(name + ".bias"));
+            }
             static const bool fused = std::getenv("SPEECH_IRODORI_FUSED") != nullptr;
             if (fused) {
                 // The taps of each output position side by side, [in * k, t], and the weight to match, [in * k, out].
@@ -106,6 +115,8 @@ struct Convolutions {
 
     /** Snake: x + sin(alpha x)^2 / (alpha + 1e-9). */
     ggml_tensor * snake(ggml_tensor * x, const std::string & name) {
+        static const bool skip = std::getenv("SPEECH_IRODORI_NO_SNAKE") != nullptr;
+        if (skip) return x;
         ggml_tensor * s = ggml_sin(ctx(), ggml_mul(ctx(), x, m.tensor(name + ".alpha")));
         return ggml_add(ctx(), x, ggml_mul(ctx(), ggml_sqr(ctx(), s), m.tensor(name + ".inv_alpha")));
     }

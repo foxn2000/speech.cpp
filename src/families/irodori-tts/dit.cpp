@@ -1,6 +1,7 @@
 #include "dit.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <string>
 
@@ -118,6 +119,10 @@ ggml_tensor * Dit::build(Graph & g, const std::vector<float> & x_in, int frames,
         ggml_tensor * gate = nullptr;
         ggml_tensor * h = adaln(x, b + "attn_ada", &gate);
         auto heads = [&](const std::string & w, ggml_tensor * in, int64_t n, int64_t batch) {
+            static const bool fake = std::getenv("SPEECH_IRODORI_FAKE_COND_KV") != nullptr;
+            if (fake && (w.find("_text") != std::string::npos || w.find("_speaker") != std::string::npos || w.find("_caption") != std::string::npos)) {
+                return ggml_reshape_4d(ctx, ggml_add(ctx, ggml_fill(ctx, ggml_new_tensor_2d(ctx, GGML_TYPE_F32, head_dim * heads_, n * batch), 0.0f), ggml_scale(ctx, ggml_sum(ctx, in), 0.0f)), head_dim, heads_, n, batch);
+            }
             return ggml_reshape_4d(ctx, mul_mat(ctx, m_.tensor(b + w), in), head_dim, heads_, n, batch);
         };
         auto norm = [&](ggml_tensor * t4, const char * w) { return ggml_mul(ctx, ggml_rms_norm(ctx, t4, eps_), m_.tensor(b + w)); };
