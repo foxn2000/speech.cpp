@@ -138,8 +138,14 @@ public:
      * step's one row from `next`, given the id the step before it chose; each step's id is the argmax of its last row's
      * logits under `head(step)`. Returns the ids.
      */
+    /** A step's choice in a chain: the candidates' ids, [k] (none for the whole vocabulary), and the pick among them, [1]. */
+    struct ChainPick {
+        ggml_tensor * candidates = nullptr;
+        ggml_tensor * pick = nullptr;
+    };
     std::vector<int32_t> chain(int64_t first_rows, const Qwen3Rows & first, int steps, const std::function<ggml_tensor *(int)> & head,
-                               const std::function<ggml_tensor *(Graph &, int, ggml_tensor *)> & next,
+                               const std::function<ChainPick(Graph &, int, ggml_tensor *)> & select,
+                               const std::function<ggml_tensor *(Graph &, int, const ChainPick &)> & next,
                                const std::function<void(Graph &)> & refill = {});
 
     const std::vector<float> & hidden() const { return hidden_; }

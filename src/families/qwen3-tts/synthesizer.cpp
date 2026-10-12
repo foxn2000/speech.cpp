@@ -124,7 +124,15 @@ SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const Audio
         {
             Timer t{&st.code_predictor};
             cp_history.clear();
-            if (cp_chain) {
+            static const bool cp_sample = std::getenv("SPEECH_CP_CHAIN_SAMPLE") != nullptr;
+            if (cp_chain && cp_sample) {
+                std::vector<float> draws((size_t) n_groups - 1);
+                std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+                for (float & d : draws) d = uniform(rng);
+                const std::vector<int32_t> codes = talker_.cp_sampled_frame(frame[0], cp_sampling.temperature, cp_sampling.top_k, draws);
+                talker_.print_debug(draws);
+                std::copy(codes.begin(), codes.end(), frame.begin() + 1);
+            } else if (cp_chain) {
                 const std::vector<int32_t> codes = talker_.cp_greedy_frame(frame[0]);
                 std::copy(codes.begin(), codes.end(), frame.begin() + 1);
             } else {

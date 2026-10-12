@@ -499,14 +499,15 @@ void Qwen3Decoder::step(int32_t id, ggml_tensor * table, ggml_tensor * head) {
 struct Qwen3Decoder::Chain {
     Graph graph{kGraphSize * 4};
     ggml_gallocr_t allocr;
-    std::vector<ggml_tensor *> ids;
+    std::vector<ChainPick> picks;
     const void * cache;
     explicit Chain(ggml_backend_t backend, const void * cache) : allocr(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))), cache(cache) {}
     ~Chain() { ggml_gallocr_free(allocr); }
 };
 
 std::vector<int32_t> Qwen3Decoder::chain(int64_t first_rows, const Qwen3Rows & first, int steps, const std::function<ggml_tensor *(int)> & head,
-                                         const std::function<ggml_tensor *(Graph &, int, ggml_tensor *)> & next,
+                                         const std::function<ChainPick(Graph &, int, ggml_tensor *)> & select,
+                                         const std::function<ggml_tensor *(Graph &, int, const ChainPick &)> & next,
                                          const std::function<void(Graph &)> & refill) {
     make_room(first_rows + steps - 1);
     static const bool keep = std::getenv("SPEECH_CP_CHAIN_KEEP") != nullptr;
@@ -524,18 +525,32 @@ std::vector<int32_t> Qwen3Decoder::chain(int64_t first_rows, const Qwen3Rows & f
             ggml_tensor * y = layers(g, x, rows, true, inputs);
             ggml_tensor * hidden = nullptr, * logits = nullptr;
             outputs(g, ggml_view_2d(g.ctx(), y, shape_.hidden, 1, y->nb[1], (rows - 1) * y->nb[1]), head(s), hidden, logits);
-            ggml_tensor * id = ggml_argmax(g.ctx(), logits);
-            g.output(id);
-            chain_->ids.push_back(id);
+            const ChainPick pick = select(g, s, logits);
+            g.output(pick.pick);
+            if (pick.candidates) g.output(pick.candidates);
+            chain_->picks.push_back(pick);
             n_past_ += rows;
             if (s + 1 < steps) {
-                x = next(g, s, id);
+                x = next(g, s, pick);
                 rows = 1;
             }
         }
         g.compute(backend_, chain_->allocr);
     }
-    std::vector<int32_t> out(chain_->ids.size());
-    for (size_t i = 0; i < out.size(); i++) ggml_backend_tensor_get(chain_->ids[i], &out[i], 0, sizeof(int32_t));
+    std::vector<int32_t> out(chain_->picks.size());
+    for (size_t i = 0; i < out.size(); i++) {
+        const ChainPick & p = chain_->picks[i];
+        int32_t at = 0;
+        ggml_backend_tensor_get(p.pick, &at, 0, sizeof(int32_t));
+        if (p.candidates) ggml_backend_tensor_get(p.candidates, &out[i], (size_t) at * sizeof(int32_t), sizeof(int32_t));
+        else out[i] = at;
+        static int printed = 0;
+        if (std::getenv("SPEECH_CP_DEBUG") && printed < 45) {
+            printed++;
+            int32_t c0 = -1;
+            if (p.candidates) ggml_backend_tensor_get(p.candidates, &c0, 0, sizeof(int32_t));
+            std::fprintf(stderr, "pick step %zu at %d code %d first candidate %d\n", i, at, out[i], c0);
+        }
+    }
     return out;
 }

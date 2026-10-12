@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "ggml-alloc.h"
@@ -52,6 +53,13 @@ public:
     const std::vector<float> & cp_next(int group, int32_t code);
     /** Code predictor: the codes 1 to 15 of a frame whose first code is `code0`, each its logits' argmax, in one graph. */
     std::vector<int32_t> cp_greedy_frame(int32_t code0);
+    /**
+     * The same, each code drawn on the device from its logits under `temperature` and the `top_k` largest, by the
+     * uniform numbers `draws`, one a code.
+     */
+    std::vector<int32_t> cp_sampled_frame(int32_t code0, float temperature, int top_k, const std::vector<float> & draws);
+    void print_debug(const std::vector<float> & draws);
+    std::vector<std::pair<ggml_tensor *, ggml_tensor *>> debug_;
 
 private:
     const std::vector<float> & run_cp(int32_t code, int group);
@@ -63,7 +71,9 @@ private:
     int cp_vocab_ = 0;
     Qwen3Decoder talker_, cp_;
     bool cp_projected_ = false;
-    ggml_tensor * chain_code0_ = nullptr, * chain_hidden_ = nullptr;
+    ggml_tensor * chain_code0_ = nullptr, * chain_hidden_ = nullptr, * chain_draws_ = nullptr;
+    std::vector<int32_t> cp_frame(int32_t code0, const std::function<Qwen3Decoder::ChainPick(Graph &, int, ggml_tensor *)> & select,
+                                  const std::function<void(Graph &)> & refill_more);
     /** The allocator of the embedding graphs; each decoder has its own. */
     ggml_gallocr_t allocr_ = nullptr;
 };
