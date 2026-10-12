@@ -110,6 +110,10 @@ void Graph::set(ggml_tensor * input, const std::vector<int32_t> & data) {
     std::memcpy(u.bytes.data(), data.data(), u.bytes.size());
 }
 
+void Graph::upload() {
+    for (const Upload & u : uploads_) ggml_backend_tensor_set(u.tensor, u.bytes.data(), 0, u.bytes.size());
+}
+
 void Graph::compute_again(ggml_backend_t backend) {
     for (const Upload & u : uploads_) ggml_backend_tensor_set(u.tensor, u.bytes.data(), 0, u.bytes.size());
     compute_graph(backend, gf_);

@@ -1,5 +1,11 @@
 #include "qwen3-decoder.h"
 
+#include <array>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <map>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -381,15 +387,40 @@ void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
     for (int64_t from = 0; from < n; from += block_rows_) {
         const int64_t count = std::min(block_rows_, n - from);
         const bool output = head && from + count == n;
+        using clock = std::chrono::steady_clock;
+        const auto t0 = clock::now();
         Graph g(kGraphSize);
         RunInputs inputs;
         ggml_tensor * x = layers(g, rows(g, from, count), count, output, inputs);
         ggml_tensor * hidden = nullptr, * logits = nullptr;
         if (output) outputs(g, ggml_view_2d(g.ctx(), x, shape_.hidden, 1, x->nb[1], (count - 1) * x->nb[1]), head, hidden, logits);
-        g.compute(backend_, allocr_);
+        const auto t1 = clock::now();
+        if (!ggml_gallocr_alloc_graph(allocr_, g.cgraph())) throw Error(Fault::OutOfMemory, "cannot allocate the memory of a graph on the device");
+        const auto t2 = clock::now();
+        g.upload();
+        const auto t3 = clock::now();
+        compute_graph(backend_, g.cgraph());
+        const auto t4 = clock::now();
         if (output) {
             Graph::read(hidden, hidden_);
             Graph::read(logits, logits_);
+        }
+        const auto t5 = clock::now();
+        if (std::getenv("SPEECH_DECODER_TIMES")) {
+            static std::map<std::string, std::array<double, 6>> totals;
+            static bool registered = false;
+            if (!registered) {
+                registered = true;
+                std::atexit([] {
+                    for (auto & [name, t] : totals) {
+                        std::fprintf(stderr, "decoder %s runs %.0f ms per run: build %.3f alloc %.3f upload %.3f compute %.3f read %.3f\n", name.c_str(), t[5],
+                                     1e3 * t[0] / t[5], 1e3 * t[1] / t[5], 1e3 * t[2] / t[5], 1e3 * t[3] / t[5], 1e3 * t[4] / t[5]);
+                    }
+                });
+            }
+            auto & t = totals[tensors_ + (count == 1 ? " 1 row" : " rows")];
+            const auto sec = [](auto a, auto b) { return std::chrono::duration<double>(b - a).count(); };
+            t[0] += sec(t0, t1); t[1] += sec(t1, t2); t[2] += sec(t2, t3); t[3] += sec(t3, t4); t[4] += sec(t4, t5); t[5] += 1;
         }
         n_past_ += count;
     }

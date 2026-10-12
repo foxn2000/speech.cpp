@@ -75,6 +75,8 @@ public:
 
     /** The graph's nodes, which outputs and copies have put in, for asking a backend whether it computes each. */
     ggml_cgraph * cgraph() const { return gf_; }
+    /** Uploads the inputs' data. */
+    void upload();
 
     /** A result, as float32 in ggml order (ne0 fastest). */
     static std::vector<float> read(const ggml_tensor * t);

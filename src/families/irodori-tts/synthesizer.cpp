@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -236,6 +238,10 @@ size_t Synthesizer::synthesize(const Request & r, const Voice & voice, const Aud
     st.tokens = tokens;
     st.frames = frames;
     st.samples = emitted;
+    if (std::getenv("SPEECH_TTS_STATS")) {
+        std::fprintf(stderr, "irodori stats: frames %d steps %d text %.4f sampling %.4f codec %.4f first_audio %.4f samples %zu\n", frames, steps,
+                     st.text, st.sampling, st.codec, st.first_audio, emitted);
+    }
     return emitted;
 }
 
