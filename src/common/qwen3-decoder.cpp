@@ -311,20 +311,31 @@ ggml_tensor * Qwen3Decoder::layers(Graph & g, ggml_tensor * x, int64_t rows, boo
     else if (rows > 1) mask = g.input(causal_mask(n_past_, rows, n_kv), n_kv, rows);
     inputs.mask = mask;
 
+    static const bool cached = std::getenv("SPEECH_QWEN3_CACHED_TENSORS") != nullptr;
+    if (cached && layer_tensors_.empty()) {
+        static const char * names[] = {"attn_norm", "attn_q", "attn_k", "attn_v", "attn_q_norm", "attn_k_norm", "attn_o", "ffn_norm", "ffn_gate", "ffn_up", "ffn_down"};
+        for (int l = 0; l < s.n_layer; l++) {
+            std::array<ggml_tensor *, 11> t{};
+            for (int i = 0; i < 11; i++) t[i] = m.tensor(tensors_ + ".blk." + std::to_string(l) + "." + names[i]);
+            layer_tensors_.push_back(t);
+        }
+    }
     for (int l = 0; l < s.n_layer; l++) {
-        const std::string b = tensors_ + ".blk." + std::to_string(l) + ".";
-        ggml_tensor * h = ggml_mul(ctx, ggml_rms_norm(ctx, x, s.rms_eps), m.tensor(b + "attn_norm"));
-        ggml_tensor * q = ggml_mul_mat(ctx, m.tensor(b + "attn_q"), h);
-        ggml_tensor * k = ggml_mul_mat(ctx, m.tensor(b + "attn_k"), h);
-        ggml_tensor * v = ggml_mul_mat(ctx, m.tensor(b + "attn_v"), h);
+        std::string b;
+        if (!cached) b = tensors_ + ".blk." + std::to_string(l) + ".";
+        auto T = [&](int i, const char * name) { return cached ? layer_tensors_[l][i] : m.tensor(b + name); };
+        ggml_tensor * h = ggml_mul(ctx, ggml_rms_norm(ctx, x, s.rms_eps), T(0, "attn_norm"));
+        ggml_tensor * q = ggml_mul_mat(ctx, T(1, "attn_q"), h);
+        ggml_tensor * k = ggml_mul_mat(ctx, T(2, "attn_k"), h);
+        ggml_tensor * v = ggml_mul_mat(ctx, T(3, "attn_v"), h);
         // Nodes that read the same inputs follow one another in the graph: Metal runs a node without waiting for the
         // one before it when neither writes what the other reads. With the feed-forward's SwiGLU in one node, this took
         // a step of the 0.6B Qwen3-ASR decoder from 7.86 to 7.67 ms on an Apple M5 (2026-10-07).
         g.expand(q);
         g.expand(k);
         g.expand(v);
-        q = ggml_mul(ctx, ggml_rms_norm(ctx, ggml_reshape_3d(ctx, q, s.head_dim, s.n_head, rows), s.rms_eps), m.tensor(b + "attn_q_norm"));
-        k = ggml_mul(ctx, ggml_rms_norm(ctx, ggml_reshape_3d(ctx, k, s.head_dim, s.n_kv_head, rows), s.rms_eps), m.tensor(b + "attn_k_norm"));
+        q = ggml_mul(ctx, ggml_rms_norm(ctx, ggml_reshape_3d(ctx, q, s.head_dim, s.n_head, rows), s.rms_eps), T(4, "attn_q_norm"));
+        k = ggml_mul(ctx, ggml_rms_norm(ctx, ggml_reshape_3d(ctx, k, s.head_dim, s.n_kv_head, rows), s.rms_eps), T(5, "attn_k_norm"));
         g.expand(q);
         g.expand(k);
         // On a GPU the rows are written to the cache rows their positions name, so that a kept step's graph writes
@@ -355,14 +366,14 @@ ggml_tensor * Qwen3Decoder::layers(Graph & g, ggml_tensor * x, int64_t rows, boo
             ggml_tensor * kq = ggml_soft_max_ext(ctx, ggml_mul_mat(ctx, kh, qh), mask, scale, 0.0f);
             o = ggml_cont(ctx, ggml_permute(ctx, ggml_mul_mat(ctx, vt, kq), 0, 2, 1, 3));
         }
-        x = ggml_add(ctx, x, ggml_mul_mat(ctx, m.tensor(b + "attn_o"), ggml_reshape_2d(ctx, o, (int64_t) s.n_head * s.head_dim, rows)));
+        x = ggml_add(ctx, x, ggml_mul_mat(ctx, T(6, "attn_o"), ggml_reshape_2d(ctx, o, (int64_t) s.n_head * s.head_dim, rows)));
 
-        h = ggml_mul(ctx, ggml_rms_norm(ctx, x, s.rms_eps), m.tensor(b + "ffn_norm"));
-        ggml_tensor * gate = ggml_mul_mat(ctx, m.tensor(b + "ffn_gate"), h);
-        ggml_tensor * up = ggml_mul_mat(ctx, m.tensor(b + "ffn_up"), h);
+        h = ggml_mul(ctx, ggml_rms_norm(ctx, x, s.rms_eps), T(7, "ffn_norm"));
+        ggml_tensor * gate = ggml_mul_mat(ctx, T(8, "ffn_gate"), h);
+        ggml_tensor * up = ggml_mul_mat(ctx, T(9, "ffn_up"), h);
         g.expand(gate);
         g.expand(up);
-        x = ggml_add(ctx, x, ggml_mul_mat(ctx, m.tensor(b + "ffn_down"), ggml_swiglu_split(ctx, gate, up)));
+        x = ggml_add(ctx, x, ggml_mul_mat(ctx, T(10, "ffn_down"), ggml_swiglu_split(ctx, gate, up)));
     }
     return x;
 }
@@ -402,7 +413,7 @@ void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
         compute_graph(backend_, g.cgraph());
         const auto t4 = clock::now();
         if (output) {
-            Graph::read(hidden, hidden_);
+            if (reads_hidden_) Graph::read(hidden, hidden_);
             Graph::read(logits, logits_);
         }
         const auto t5 = clock::now();

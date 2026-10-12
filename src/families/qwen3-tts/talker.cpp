@@ -23,7 +23,9 @@ Talker::Talker(const ModelFile & m, ggml_backend_t backend)
       // The code predictor's sequence is the talker's hidden state and a frame's codes.
       cp_(m, backend, "cp", read_qwen3_shape(m, "qwen3-tts.code_predictor"), n_groups_ + 1, GGML_TYPE_F32),
       cp_projected_(cp_.shape().hidden != talker_.shape().hidden),
-      allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {}
+      allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {
+    if (std::getenv("SPEECH_CP_NO_HIDDEN")) cp_.set_reads_hidden(false);
+}
 
 Talker::~Talker() {
     if (allocr_) ggml_gallocr_free(allocr_);
