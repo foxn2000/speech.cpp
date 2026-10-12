@@ -1,0 +1,41 @@
+name: cuda-experiment
+
+# Builds speech with ggml's CUDA backend for an RTX 2080 (sm_75), to measure it against Vulkan on the Windows machine.
+# The ggml patch logs each shape of matrix product that goes to cuBLAS when SPEECH_CUBLAS_LOG is set.
+on:
+  push:
+    branches: [cuda-experiment]
+
+jobs:
+  windows-cuda:
+    runs-on: windows-2025
+    env:
+      CUDA_VERSION: 13.4.2
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Fetch CUDA
+        run: python experiment/fetch_cuda.py $env:CUDA_VERSION windows-x86_64 "$env:RUNNER_TEMP\cuda" cccl cuda_crt cuda_cudart cuda_nvcc libnvvm libcublas
+      - name: Patch ggml
+        run: git -C ggml apply ../experiment/cublas-log.patch
+      - name: Build
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSDIR=%%i
+          call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat"
+          set CUDA_PATH=%RUNNER_TEMP%\cuda
+          set PATH=%CUDA_PATH%\bin;%PATH%
+          where ninja
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_NATIVE=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON -DCMAKE_CUDA_ARCHITECTURES=75 "-DCMAKE_CUDA_COMPILER=%CUDA_PATH%\bin\nvcc.exe" "-DCUDAToolkit_ROOT=%CUDA_PATH%" || exit /b 1
+          cmake --build build -j 4 || exit /b 1
+          dumpbin /dependents build\speech.exe
+      - name: Package
+        run: |
+          New-Item -ItemType Directory package
+          Copy-Item build/speech.exe, build/speech.dll package/
+          Compress-Archive -Path package/* -DestinationPath speech-windows-x64-cuda.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: speech-windows-x64-cuda
+          path: speech-windows-x64-cuda.zip

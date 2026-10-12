@@ -1,0 +1,29 @@
+diff --git a/src/ggml-cuda/ggml-cuda.cu b/src/ggml-cuda/ggml-cuda.cu
+index 9dd34c8..7741cc4 100644
+--- a/src/ggml-cuda/ggml-cuda.cu
++++ b/src/ggml-cuda/ggml-cuda.cu
+@@ -1,4 +1,5 @@
+ #include "ggml-cuda.h"
++#include <set>
+ #include "ggml-impl.h"
+ #include "ggml-backend-impl.h"
+ 
+@@ -1621,6 +1622,18 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
+ }
+ 
+ static void ggml_cuda_mul_mat_cublas(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
++    if (getenv("SPEECH_CUBLAS_LOG")) {
++        static std::mutex log_mutex;
++        static std::set<std::string> seen;
++        char line[256];
++        snprintf(line, sizeof(line), "cublas mul_mat %s [%lld %lld %lld %lld] x %s [%lld %lld %lld %lld]",
++            ggml_type_name(src0->type), (long long) src0->ne[0], (long long) src0->ne[1], (long long) src0->ne[2], (long long) src0->ne[3],
++            ggml_type_name(src1->type), (long long) src1->ne[0], (long long) src1->ne[1], (long long) src1->ne[2], (long long) src1->ne[3]);
++        std::lock_guard<std::mutex> lock(log_mutex);
++        if (seen.insert(line).second) {
++            fprintf(stderr, "%s\n", line);
++        }
++    }
+     const int cc = ggml_cuda_info().devices[ctx.device].cc;
+     ggml_type compute_type = src0->type;
+     if (ggml_is_quantized(compute_type)) {
