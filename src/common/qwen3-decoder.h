@@ -133,6 +133,14 @@ public:
      */
     void step(int32_t id, ggml_tensor * table, ggml_tensor * head);
 
+    /**
+     * Runs `steps` steps after the sequence in one graph: the first step's `first_rows` rows from `first`, and each later
+     * step's one row from `next`, given the id the step before it chose; each step's id is the argmax of its last row's
+     * logits under `head(step)`. Returns the ids.
+     */
+    std::vector<int32_t> chain(int64_t first_rows, const Qwen3Rows & first, int steps, const std::function<ggml_tensor *(int)> & head,
+                               const std::function<ggml_tensor *(Graph &, int, ggml_tensor *)> & next);
+
     const std::vector<float> & hidden() const { return hidden_; }
     /** Whether run() reads the last row's hidden state back; a caller that never asks for hidden() turns it off. */
     void set_reads_hidden(bool reads) { reads_hidden_ = reads; }

@@ -493,3 +493,30 @@ void Qwen3Decoder::step(int32_t id, ggml_tensor * table, ggml_tensor * head) {
     }
     n_past_ += 1;
 }
+
+std::vector<int32_t> Qwen3Decoder::chain(int64_t first_rows, const Qwen3Rows & first, int steps, const std::function<ggml_tensor *(int)> & head,
+                                         const std::function<ggml_tensor *(Graph &, int, ggml_tensor *)> & next) {
+    make_room(first_rows + steps - 1);
+    Graph g(kGraphSize * 4);
+    ggml_tensor * x = first(g, 0, first_rows);
+    int64_t rows = first_rows;
+    std::vector<ggml_tensor *> ids;
+    for (int s = 0; s < steps; s++) {
+        RunInputs inputs;
+        ggml_tensor * y = layers(g, x, rows, true, inputs);
+        ggml_tensor * hidden = nullptr, * logits = nullptr;
+        outputs(g, ggml_view_2d(g.ctx(), y, shape_.hidden, 1, y->nb[1], (rows - 1) * y->nb[1]), head(s), hidden, logits);
+        ggml_tensor * id = ggml_argmax(g.ctx(), logits);
+        g.output(id);
+        ids.push_back(id);
+        n_past_ += rows;
+        if (s + 1 < steps) {
+            x = next(g, s, id);
+            rows = 1;
+        }
+    }
+    g.compute(backend_, allocr_);
+    std::vector<int32_t> out(ids.size());
+    for (size_t i = 0; i < ids.size(); i++) ggml_backend_tensor_get(ids[i], &out[i], 0, sizeof(int32_t));
+    return out;
+}

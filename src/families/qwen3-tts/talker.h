@@ -50,6 +50,8 @@ public:
     const std::vector<float> & cp_begin(int32_t code0);
     /** Feeds code `group` (1..14) and returns the logits of code `group + 1`. */
     const std::vector<float> & cp_next(int group, int32_t code);
+    /** Code predictor: the codes 1 to 15 of a frame whose first code is `code0`, each its logits' argmax, in one graph. */
+    std::vector<int32_t> cp_greedy_frame(int32_t code0);
 
 private:
     const std::vector<float> & run_cp(int32_t code, int group);

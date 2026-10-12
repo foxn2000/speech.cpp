@@ -75,7 +75,9 @@ SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const Audio
     std::mt19937_64 rng(r.seed);
     const int max_frames = std::min(r.max_frames, generation_.max_frames);
     const SamplingParams talker_sampling = r.talker.value_or(generation_.talker);
-    const SamplingParams cp_sampling = r.code_predictor.value_or(generation_.code_predictor);
+    SamplingParams cp_sampling = r.code_predictor.value_or(generation_.code_predictor);
+    static const bool cp_greedy = std::getenv("SPEECH_CP_GREEDY") != nullptr, cp_chain = std::getenv("SPEECH_CP_CHAIN") != nullptr;
+    if (cp_greedy) cp_sampling.greedy = true;
     // The code predictor's generate() starts each frame from embeddings alone, so the codes its repetition penalty sees
     // are the frame's that it has made so far.
     std::vector<int32_t> cp_history;
@@ -122,10 +124,15 @@ SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const Audio
         {
             Timer t{&st.code_predictor};
             cp_history.clear();
+            if (cp_chain) {
+                const std::vector<int32_t> codes = talker_.cp_greedy_frame(frame[0]);
+                std::copy(codes.begin(), codes.end(), frame.begin() + 1);
+            } else {
             frame[1] = sample_code(talker_.cp_begin(frame[0]));
             for (int g = 1; g < n_groups - 1; g++) {
                 cp_history.push_back(frame[g]);
                 frame[g + 1] = sample_code(talker_.cp_next(g, frame[g]));
+            }
             }
         }
         pending.insert(pending.end(), frame.begin(), frame.end());

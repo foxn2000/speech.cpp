@@ -115,3 +115,22 @@ const std::vector<float> & Talker::run_cp(int32_t code, int group) {
         m.tensor("cp.head." + std::to_string(group)));
     return cp_.logits();
 }
+
+std::vector<int32_t> Talker::cp_greedy_frame(int32_t code0) {
+    const ModelFile & m = m_;
+    cp_.start(n_groups_ + 1, 2);
+    auto project = [&](ggml_context * ctx, ggml_tensor * x) {
+        return cp_projected_ ? ggml_add(ctx, ggml_mul_mat(ctx, m.tensor("cp.in_proj.weight"), x), m.tensor("cp.in_proj.bias")) : x;
+    };
+    return cp_.chain(
+        2,
+        [&](Graph & g, int64_t, int64_t) {
+            ggml_context * ctx = g.ctx();
+            ggml_tensor * id = g.input(std::vector<int32_t>{code0}, 1);
+            return project(ctx, ggml_concat(ctx, g.input(talker_.hidden(), hidden(), 1), ggml_get_rows(ctx, m.tensor("talker.codec_embd"), id), 1));
+        },
+        n_groups_ - 1, [&](int s) { return m.tensor("cp.head." + std::to_string(s)); },
+        [&](Graph & g, int s, ggml_tensor * id) {
+            return project(g.ctx(), ggml_get_rows(g.ctx(), m.tensor("cp.codec_embd." + std::to_string(s)), id));
+        });
+}
