@@ -1,5 +1,6 @@
 #include "talker.h"
 
+#include <cstdlib>
 #include <string>
 
 #include "graph.h"
@@ -68,9 +69,14 @@ void Talker::step(const int32_t * codes, const std::vector<float> & extra) {
             // A frame's input is the sum of its codes' embeddings: the first from the talker's table, the
             // others from the code predictor's, which live in the talker's hidden space.
             ggml_context * ctx = g.ctx();
-            ggml_tensor * x = ggml_get_rows(ctx, m.tensor("talker.codec_embd"), g.input(std::vector<int32_t>{codes[0]}, 1));
+            static const bool packed = std::getenv("SPEECH_TALKER_PACKED") != nullptr;
+            ggml_tensor * all = packed ? g.input(std::vector<int32_t>(codes, codes + n_groups_), n_groups_) : nullptr;
+            auto code = [&](int q) {
+                return packed ? ggml_view_1d(ctx, all, 1, (size_t) q * sizeof(int32_t)) : g.input(std::vector<int32_t>{codes[q]}, 1);
+            };
+            ggml_tensor * x = ggml_get_rows(ctx, m.tensor("talker.codec_embd"), code(0));
             for (int q = 1; q < n_groups_; q++) {
-                ggml_tensor * id = g.input(std::vector<int32_t>{codes[q]}, 1);
+                ggml_tensor * id = code(q);
                 x = ggml_add(ctx, x, ggml_get_rows(ctx, m.tensor("cp.codec_embd." + std::to_string(q - 1)), id));
             }
             return ggml_add(ctx, x, g.input(extra, hidden()));

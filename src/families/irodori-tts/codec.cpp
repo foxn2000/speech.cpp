@@ -54,6 +54,18 @@ struct Convolutions {
         } else {
             const int64_t p = (k_width - 1) * dilation / 2;
             ggml_tensor * xp = pad(x, p, p);
+            static const bool fused = std::getenv("SPEECH_IRODORI_FUSED") != nullptr;
+            if (fused) {
+                // The taps of each output position side by side, [in * k, t], and the weight to match, [in * k, out].
+                ggml_tensor * cols = ggml_new_tensor_3d(ctx(), GGML_TYPE_F32, in, k_width, t);
+                for (int64_t k = 0; k < k_width; k++) {
+                    ggml_tensor * xk = ggml_view_2d(ctx(), xp, in, t, xp->nb[1], k * dilation * xp->nb[1]);
+                    cols = ggml_set_inplace(ctx(), cols, xk, cols->nb[2], cols->nb[2] * t, cols->nb[2] * t, k * cols->nb[1]);
+                }
+                ggml_tensor * wf = ggml_cont(ctx(), ggml_permute(ctx(), w, 0, 2, 1, 3));
+                y = mul_mat(ctx(), ggml_reshape_2d(ctx(), wf, in * k_width, out), ggml_reshape_2d(ctx(), cols, in * k_width, t));
+                return ggml_add(ctx(), y, m.tensor(name + ".bias"));
+            }
             for (int64_t k = 0; k < k_width; k++) {
                 ggml_tensor * wk = ggml_view_2d(ctx(), w, in, out, w->nb[1], k * w->nb[2]);
                 ggml_tensor * xk = ggml_view_2d(ctx(), xp, in, t, xp->nb[1], k * dilation * xp->nb[1]);
