@@ -85,7 +85,8 @@ int TailCut::flattening_point(const std::vector<float> & latent, int frames, int
  * samples. Qwen3-TTS's chunked codec differs by up to 7e-4 between chunkings and keeps a fixed schedule.
  */
 WindowRule Synthesizer::window_rule(int hop, int sample_rate) {
-    return {12, 24, 48, Codec::kDecoderMargin, (double) hop / sample_rate, 0.1};
+    const char * ceiling = std::getenv("SPEECH_IRODORI_CEILING");
+    return {12, 24, ceiling ? std::atoi(ceiling) : 48, Codec::kDecoderMargin, (double) hop / sample_rate, 0.1};
 }
 
 Synthesizer::Synthesizer(const std::string & model_path, ggml_backend_t backend)

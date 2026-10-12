@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 
@@ -28,6 +30,13 @@ struct Convolutions {
 
     ggml_context * ctx() const { return g.ctx(); }
 
+    /** The weight `name`, cast to F16 when SPEECH_IRODORI_CODEC_F16 is set. */
+    ggml_tensor * weight(const std::string & name) {
+        static const bool f16 = std::getenv("SPEECH_IRODORI_CODEC_F16") != nullptr;
+        ggml_tensor * w = m.tensor(name);
+        return f16 ? ggml_cast(ctx(), w, GGML_TYPE_F16) : w;
+    }
+
     /** `x` with `left` and `right` samples of silence around it. */
     ggml_tensor * pad(ggml_tensor * x, int64_t left, int64_t right) {
         if (left > 0) x = ggml_concat(ctx(), g.zeros(x->ne[0], left), x, 1);
@@ -37,7 +46,7 @@ struct Convolutions {
 
     /** A stride-1 convolution with symmetric padding; weight ne = [in, out, k]. */
     ggml_tensor * conv(ggml_tensor * x, const std::string & name, int dilation = 1) {
-        ggml_tensor * w = m.tensor(name + ".weight");
+        ggml_tensor * w = weight(name + ".weight");
         const int64_t in = w->ne[0], out = w->ne[1], k_width = w->ne[2], t = x->ne[1];
         ggml_tensor * y = nullptr;
         if (k_width == 1) {
@@ -61,14 +70,14 @@ struct Convolutions {
         ggml_tensor * frames = ggml_reshape_2d(ctx(), pad(x, stride / 2, stride / 2), c * stride, n + 1);
         ggml_tensor * first = ggml_view_2d(ctx(), frames, c * stride, n, frames->nb[1], 0);
         ggml_tensor * second = ggml_view_2d(ctx(), frames, c * stride, n, frames->nb[1], frames->nb[1]);
-        ggml_tensor * y = ggml_add(ctx(), mul_mat(ctx(), m.tensor(name + ".first"), first),
-                                   mul_mat(ctx(), m.tensor(name + ".second"), second));
+        ggml_tensor * y = ggml_add(ctx(), mul_mat(ctx(), weight(name + ".first"), first),
+                                   mul_mat(ctx(), weight(name + ".second"), second));
         return ggml_add(ctx(), y, m.tensor(name + ".bias"));
     }
 
     /** The transposed convolution of width 2s, stride s and padding s / 2; weight ne = [in, out, 2s]. */
     ggml_tensor * up(ggml_tensor * x, const std::string & name, int stride) {
-        ggml_tensor * w = m.tensor(name + ".weight");
+        ggml_tensor * w = weight(name + ".weight");
         const int64_t in = w->ne[0], out = w->ne[1], k_width = w->ne[2], frames = x->ne[1], half = stride / 2;
         ggml_tensor * z = ggml_reshape_3d(ctx(), mul_mat(ctx(), ggml_reshape_2d(ctx(), w, in, out * k_width), x), out, k_width, frames);
         auto taps = [&](int64_t first_tap, int64_t taps_n, int64_t first_frame, int64_t frames_n) {
@@ -195,8 +204,10 @@ void Codec::decode(const std::vector<float> & latent, int64_t samples, const Win
             throw std::logic_error("a window of " + std::to_string(window) + " frames with " + std::to_string(progress.frames_left) + " left");
         }
         const int64_t b = a + window;
+        if (std::getenv("SPEECH_IRODORI_WINDOWS")) std::fprintf(stderr, "codec window %d\n", window);
         // The margin, and at least two frames, so that the window is long enough to decode.
-        int64_t from = std::max<int64_t>(0, a - kDecoderMargin), to = std::min(frames, b + kDecoderMargin);
+        static const int margin = std::getenv("SPEECH_IRODORI_MARGIN") ? std::atoi(std::getenv("SPEECH_IRODORI_MARGIN")) : kDecoderMargin;
+        int64_t from = std::max<int64_t>(0, a - margin), to = std::min(frames, b + margin);
         if (to - from < 2) from = std::max<int64_t>(0, to - 2);
         const Clock::time_point start = Clock::now();
         Graph g;
