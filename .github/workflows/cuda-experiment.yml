@@ -11,6 +11,8 @@ jobs:
     runs-on: windows-2025
     env:
       CUDA_VERSION: 13.4.2
+      # ggml turns CUDA graphs on by default only inside llama.cpp.
+      GRAPHS: ON
     steps:
       - uses: actions/checkout@v6
         with:
@@ -27,15 +29,15 @@ jobs:
           set CUDA_PATH=%RUNNER_TEMP%\cuda
           set PATH=%CUDA_PATH%\bin;%PATH%
           where ninja
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_NATIVE=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON -DCMAKE_CUDA_ARCHITECTURES=75 "-DCMAKE_CUDA_COMPILER=%CUDA_PATH%\bin\nvcc.exe" "-DCUDAToolkit_ROOT=%CUDA_PATH%" || exit /b 1
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_NATIVE=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON -DGGML_CUDA_GRAPHS=%GRAPHS% -DCMAKE_CUDA_ARCHITECTURES=75 "-DCMAKE_CUDA_COMPILER=%CUDA_PATH%\bin\nvcc.exe" "-DCUDAToolkit_ROOT=%CUDA_PATH%" || exit /b 1
           cmake --build build -j 4 || exit /b 1
           dumpbin /dependents build\speech.exe
       - name: Package
         run: |
           New-Item -ItemType Directory package
           Copy-Item build/speech.exe, build/speech.dll package/
-          Compress-Archive -Path package/* -DestinationPath speech-windows-x64-cuda.zip
+          Compress-Archive -Path package/* -DestinationPath speech-windows-x64-cuda-graphs.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: speech-windows-x64-cuda
-          path: speech-windows-x64-cuda.zip
+          name: speech-windows-x64-cuda-graphs
+          path: speech-windows-x64-cuda-graphs.zip
