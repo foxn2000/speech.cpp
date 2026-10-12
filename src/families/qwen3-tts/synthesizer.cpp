@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <random>
 #include <stdexcept>
 
@@ -135,5 +137,9 @@ SynthesisOutcome Synthesizer::synthesize(const SynthesisRequest & r, const Audio
         talker_.step(frame.data(), prompt.frame_extra);
     }
     if (!stopped) flush();
+    if (std::getenv("SPEECH_TTS_STATS")) {
+        std::fprintf(stderr, "qwen3-tts stats: frames %d prompt %.4f talker %.4f code_predictor %.4f codec %.4f\n", frames,
+                     st.prompt, st.talker, st.code_predictor, st.codec);
+    }
     return {frames, ended};
 }

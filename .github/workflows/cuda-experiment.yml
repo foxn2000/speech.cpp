@@ -9,10 +9,13 @@ on:
 jobs:
   windows-cuda:
     runs-on: windows-2025
+    strategy:
+      matrix:
+        graphs: [OFF, ON]
     env:
       CUDA_VERSION: 13.4.2
       # ggml turns CUDA graphs on by default only inside llama.cpp.
-      GRAPHS: ON
+      GRAPHS: ${{ matrix.graphs }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -36,8 +39,8 @@ jobs:
         run: |
           New-Item -ItemType Directory package
           Copy-Item build/speech.exe, build/speech.dll package/
-          Compress-Archive -Path package/* -DestinationPath speech-windows-x64-cuda-graphs.zip
+          Compress-Archive -Path package/* -DestinationPath speech-windows-x64-cuda-graphs-${{ matrix.graphs }}.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: speech-windows-x64-cuda-graphs
-          path: speech-windows-x64-cuda-graphs.zip
+          name: speech-windows-x64-cuda-graphs-${{ matrix.graphs }}
+          path: speech-windows-x64-cuda-graphs-${{ matrix.graphs }}.zip
