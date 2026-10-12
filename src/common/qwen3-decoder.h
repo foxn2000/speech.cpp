@@ -136,6 +136,9 @@ public:
     const std::vector<float> & hidden() const { return hidden_; }
     /** Whether run() reads the last row's hidden state back; a caller that never asks for hidden() turns it off. */
     void set_reads_hidden(bool reads) { reads_hidden_ = reads; }
+    /** Whether a run or step reads only the logits' argmax, best(), rather than the logits. */
+    void set_argmax(bool argmax) { argmax_ = argmax; }
+    int32_t best() const { return best_; }
     const std::vector<float> & logits() const { return logits_; }
 
     /**
@@ -186,5 +189,7 @@ private:
     int64_t n_past_ = 0;
     std::vector<float> hidden_, logits_;
     bool reads_hidden_ = true;
+    bool argmax_ = false;
+    int32_t best_ = 0;
     std::vector<std::array<ggml_tensor *, 11>> layer_tensors_;
 };

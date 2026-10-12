@@ -194,7 +194,7 @@ struct Qwen3Decoder::TokenStep {
     ggml_gallocr_t allocr;
     ggml_tensor * table, * head;
     int64_t n_kv;
-    ggml_tensor * id = nullptr, * hidden = nullptr, * logits = nullptr;
+    ggml_tensor * id = nullptr, * hidden = nullptr, * logits = nullptr, * best = nullptr;
     RunInputs inputs;
 
     TokenStep(ggml_backend_t backend, ggml_tensor * table, ggml_tensor * head, int64_t n_kv)
@@ -405,6 +405,11 @@ void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
         ggml_tensor * x = layers(g, rows(g, from, count), count, output, inputs);
         ggml_tensor * hidden = nullptr, * logits = nullptr;
         if (output) outputs(g, ggml_view_2d(g.ctx(), x, shape_.hidden, 1, x->nb[1], (count - 1) * x->nb[1]), head, hidden, logits);
+        ggml_tensor * best = nullptr;
+        if (output && argmax_) {
+            best = ggml_argmax(g.ctx(), logits);
+            g.output(best);
+        }
         const auto t1 = clock::now();
         if (!ggml_gallocr_alloc_graph(allocr_, g.cgraph())) throw Error(Fault::OutOfMemory, "cannot allocate the memory of a graph on the device");
         const auto t2 = clock::now();
@@ -414,7 +419,8 @@ void Qwen3Decoder::run(int64_t n, const Qwen3Rows & rows, ggml_tensor * head) {
         const auto t4 = clock::now();
         if (output) {
             if (reads_hidden_) Graph::read(hidden, hidden_);
-            Graph::read(logits, logits_);
+            if (argmax_) ggml_backend_tensor_get(best, &best_, 0, sizeof(best_));
+            else Graph::read(logits, logits_);
         }
         const auto t5 = clock::now();
         if (std::getenv("SPEECH_DECODER_TIMES")) {
@@ -443,6 +449,8 @@ void Qwen3Decoder::step(int32_t id, ggml_tensor * table, ggml_tensor * head) {
         return;
     }
     make_room(1);
+    using clock = std::chrono::steady_clock;
+    const auto t0 = clock::now();
     const int64_t n_kv = round_up(n_past_ + 1, kAttentionBlock);
     TokenStep * s = token_step_.get();
     if (s && s->table == table && s->head == head && s->n_kv == n_kv) {
@@ -456,9 +464,32 @@ void Qwen3Decoder::step(int32_t id, ggml_tensor * table, ggml_tensor * head) {
         s->id = s->graph.input(std::vector<int32_t>{id}, 1);
         ggml_tensor * x = layers(s->graph, ggml_get_rows(s->graph.ctx(), table, s->id), 1, true, s->inputs);
         outputs(s->graph, x, head, s->hidden, s->logits);
+        if (argmax_) {
+            s->best = ggml_argmax(s->graph.ctx(), s->logits);
+            s->graph.output(s->best);
+        }
         s->graph.compute(backend_, s->allocr);
     }
-    Graph::read(s->hidden, hidden_);
-    Graph::read(s->logits, logits_);
+    const auto t1 = clock::now();
+    if (reads_hidden_) Graph::read(s->hidden, hidden_);
+    if (argmax_) ggml_backend_tensor_get(s->best, &best_, 0, sizeof(best_));
+    else Graph::read(s->logits, logits_);
+    const auto t2 = clock::now();
+    if (std::getenv("SPEECH_DECODER_TIMES")) {
+        static std::map<std::string, std::array<double, 3>> totals;
+        static bool registered = false;
+        if (!registered) {
+            registered = true;
+            std::atexit([] {
+                for (auto & [name, t] : totals) {
+                    std::fprintf(stderr, "decoder %s token steps %.0f ms per step: compute %.3f read %.3f\n", name.c_str(), t[2], 1e3 * t[0] / t[2], 1e3 * t[1] / t[2]);
+                }
+            });
+        }
+        auto & t = totals[tensors_];
+        t[0] += std::chrono::duration<double>(t1 - t0).count();
+        t[1] += std::chrono::duration<double>(t2 - t1).count();
+        t[2] += 1;
+    }
     n_past_ += 1;
 }

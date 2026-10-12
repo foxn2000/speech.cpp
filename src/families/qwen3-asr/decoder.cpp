@@ -1,5 +1,7 @@
 #include "decoder.h"
 
+#include <cstdlib>
+
 #include <algorithm>
 #include <stdexcept>
 #include <string>
@@ -22,7 +24,10 @@ Decoder::Decoder(const ModelFile & m, ggml_backend_t backend, ggml_type cache_ty
              kQwen3BlockRows, attention),
       max_new_tokens_(m.u32("qwen3-asr.generation.max_new_tokens")),
       eos_(m.i32_array("qwen3-asr.generation.eos_ids")),
-      allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {}
+      allocr_(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend))) {
+    if (std::getenv("SPEECH_ASR_NO_HIDDEN")) stack_.set_reads_hidden(false);
+    if (std::getenv("SPEECH_ASR_ARGMAX")) stack_.set_argmax(true);
+}
 
 Decoder::~Decoder() {
     if (allocr_) ggml_gallocr_free(allocr_);
@@ -72,8 +77,14 @@ void Decoder::step(int32_t id) {
 std::optional<Generation> Decoder::generate(const std::function<bool(size_t tokens)> & keep_going) {
     Generation out;
     for (;;) {
-        const std::vector<float> & l = logits();
-        const int32_t id = (int32_t) (std::max_element(l.begin(), l.end()) - l.begin());
+        static const bool argmax = std::getenv("SPEECH_ASR_ARGMAX") != nullptr;
+        int32_t id;
+        if (argmax) {
+            id = stack_.best();
+        } else {
+            const std::vector<float> & l = logits();
+            id = (int32_t) (std::max_element(l.begin(), l.end()) - l.begin());
+        }
         out.ids.push_back(id);
         if (std::find(eos_.begin(), eos_.end(), id) != eos_.end()) return out;
         if ((int64_t) out.ids.size() == max_new_tokens_) {
