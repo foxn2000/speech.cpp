@@ -17,6 +17,16 @@
 
 namespace {
 
+/** Experiment: whether `name` is an expert tensor that stays on the CPU, past DRAMA3_GPU_EXPERT_LAYERS layers kept on the GPU. */
+bool expert_on_cpu(const std::string & name) {
+    if (name.find("_exps") == std::string::npos) return false;
+    const char * kept = std::getenv("DRAMA3_GPU_EXPERT_LAYERS");
+    const int layers = kept ? std::atoi(kept) : 0;
+    const int layer = std::atoi(name.c_str() + 4);
+    return layer >= layers;
+}
+
+
 /** The voice that speaks without a reference, every speaker of the text in a voice of the model's choosing. */
 constexpr const char * kNoReference = "none";
 
@@ -44,7 +54,7 @@ class Drama3Engine : public Engine {
 public:
     Drama3Engine(const std::string & path, ggml_backend_t backend)
         : model_(path, backend, drama3::model_layout,
-                 [](const std::string & name) { return !drama3::g_experts || name.find("_exps") == std::string::npos; }),
+                 [](const std::string & name) { return !drama3::g_experts || !expert_on_cpu(name); }),
           synth_(model_, backend) {
         voices_.emplace(kNoReference, drama3::Voice{});
     }
@@ -144,6 +154,7 @@ FamilyInfo describe_drama3(const std::shared_ptr<const ModelFile> & file) {
     return info;
 }
 
+
 std::unique_ptr<Engine> load_drama3(const std::string & path, ggml_backend_t backend, int threads) {
     if (std::getenv("DRAMA3_CPU_EXPERTS")) {
         const int n = threads > 0 ? threads : default_threads();
@@ -153,7 +164,7 @@ std::unique_ptr<Engine> load_drama3(const std::string & path, ggml_backend_t bac
             ggml_backend_cpu_set_threadpool(drama3::g_cpu, ggml_threadpool_new(&params));
         }
         std::fprintf(stderr, "experts on the CPU with %d threads%s\n", n, std::getenv("DRAMA3_NO_POOL") ? "" : " in a pool");
-        drama3::g_experts = new ModelFile(path, drama3::g_cpu, drama3::model_layout, [](const std::string & name) { return name.find("_exps") != std::string::npos; });
+        drama3::g_experts = new ModelFile(path, drama3::g_cpu, drama3::model_layout, expert_on_cpu);
     }
     return std::make_unique<Drama3Engine>(path, backend);
 }

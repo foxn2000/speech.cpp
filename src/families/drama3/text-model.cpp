@@ -185,7 +185,7 @@ ggml_tensor * TextModel::experts(Graph & g, int l, ggml_tensor * x, ggml_tensor 
     ggml_tensor * weights = ggml_get_rows(c, ggml_reshape_3d(c, probabilities, 1, experts_, n), chosen);
     if (norm_topk_) weights = ggml_div(c, weights, ggml_reshape_3d(c, ggml_sum_rows(c, ggml_reshape_2d(c, weights, used_, n)), 1, 1, n));
     ggml_tensor * rows = ggml_reshape_3d(c, x, h_, 1, n);
-    const ModelFile & ex = g_experts ? *g_experts : m_;
+    const ModelFile & ex = g_experts && g_experts->loaded(p + "ffn_gate_exps") ? *g_experts : m_;
     ggml_tensor * gate = mul_mat_id(c, ex.tensor(p + "ffn_gate_exps"), rows, chosen);
     ggml_tensor * up = mul_mat_id(c, ex.tensor(p + "ffn_up_exps"), rows, chosen);
     ggml_tensor * down = mul_mat_id(c, ex.tensor(p + "ffn_down_exps"), ggml_mul(c, ggml_silu(c, gate), up), chosen);

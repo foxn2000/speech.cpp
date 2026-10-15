@@ -80,6 +80,9 @@ public:
     /** A loaded tensor; one the file does not hold or that was not loaded throws. */
     ggml_tensor * tensor(const std::string & name) const;
 
+    /** Experiment: whether the tensor `name` was loaded. */
+    bool loaded(const std::string & name) const { return by_name_.count(name) > 0; }
+
     /** Whether the file has `key`, for a key that a file has only where its model has a value for it. */
     bool has(const std::string & key) const;
     uint32_t u32(const std::string & key) const;
