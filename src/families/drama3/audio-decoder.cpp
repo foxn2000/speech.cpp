@@ -1,5 +1,9 @@
 #include "audio-decoder.h"
 
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+
 #include <algorithm>
 #include <stdexcept>
 #include <string>
@@ -177,7 +181,11 @@ std::vector<int32_t> AudioDecoder::step(const std::vector<float> & hidden, const
     std::vector<float> state = hidden;
     // A graph for each residual codebook's layer, the first with the shared layers before it, since each layer mixes in
     // the code drawn from the head before it.
+    using clock = std::chrono::steady_clock;
+    static double t_build = 0, t_compute = 0, t_read = 0, t_choose = 0;
+    static int calls = 0;
     for (int b = 0; b + 1 < codebooks_; b++) {
+        const auto t0 = clock::now();
         Graph g;
         const Rows r = rows(g, 1, frame.data(), audio, b == 0);
         ggml_tensor * x = g.input(state, d_, 1);
@@ -192,10 +200,24 @@ std::vector<int32_t> AudioDecoder::step(const std::vector<float> & hidden, const
         ggml_tensor * logits = mul_mat(g.ctx(), m_.tensor("ad.head." + std::to_string(b)), x);
         g.output(x);
         g.output(logits);
+        const auto t1 = clock::now();
         g.compute(backend_, allocr_);
+        const auto t2 = clock::now();
         for (ggml_tensor * t : kept) outputs->push_back(Graph::read(t));
         state = Graph::read(x);
-        codes.push_back(choose(b + 1, Graph::read(logits)));
+        const std::vector<float> lg = Graph::read(logits);
+        const auto t3 = clock::now();
+        codes.push_back(choose(b + 1, lg));
+        const auto t4 = clock::now();
+        const auto ms = [](clock::time_point a, clock::time_point b2) { return std::chrono::duration<double, std::milli>(b2 - a).count(); };
+        t_build += ms(t0, t1);
+        t_compute += ms(t1, t2);
+        t_read += ms(t2, t3);
+        t_choose += ms(t3, t4);
+        if (b == 0 && std::getenv("DRAMA3_TIMING") && calls == 49) std::fprintf(stderr, "decoder graph 0 nodes %d, logits %lld\n", ggml_graph_n_nodes(g.cgraph()), (long long) ggml_nelements(logits));
+    }
+    if (++calls % 50 == 0 && std::getenv("DRAMA3_TIMING")) {
+        std::fprintf(stderr, "decoder per frame: build %.2f, compute %.2f, read %.2f, choose %.2f ms\n", t_build / calls, t_compute / calls, t_read / calls, t_choose / calls);
     }
     n_past_++;
     return codes;

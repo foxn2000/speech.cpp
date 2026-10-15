@@ -89,6 +89,13 @@ void Graph::compute(ggml_backend_t backend, ggml_gallocr_t allocr) {
     compute_again(backend);
 }
 
+void Graph::compute_scheduled(ggml_backend_sched_t sched) {
+    ggml_backend_sched_reset(sched);
+    if (!ggml_backend_sched_alloc_graph(sched, gf_)) throw Error(Fault::OutOfMemory, "cannot allocate a scheduled graph");
+    for (const Upload & u : uploads_) ggml_backend_tensor_set(u.tensor, u.bytes.data(), 0, u.bytes.size());
+    if (ggml_backend_sched_graph_compute(sched, gf_) != GGML_STATUS_SUCCESS) throw Error(Fault::Device, "a scheduled graph failed");
+}
+
 Graph::Upload & Graph::upload_of(const ggml_tensor * input) {
     for (Upload & u : uploads_) {
         if (u.tensor == input) return u;

@@ -1,5 +1,9 @@
 #include "text-model.h"
 
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -7,6 +11,9 @@
 #include "error.h"
 
 namespace drama3 {
+
+const ModelFile * g_experts = nullptr;
+ggml_backend_t g_cpu = nullptr;
 
 namespace {
 
@@ -168,7 +175,7 @@ ggml_tensor * TextModel::delta_mixer(Graph & g, int l, ggml_tensor * x) {
     return mul_mat(c, m_.tensor(p + "ssm_out"), ggml_reshape_2d(c, core, (int64_t) value_heads_ * value_dim_, n));
 }
 
-ggml_tensor * TextModel::experts(Graph & g, int l, ggml_tensor * x, ggml_tensor ** router) {
+ggml_tensor * TextModel::experts(Graph & g, int l, ggml_tensor * x, ggml_tensor ** router, bool routed_only_skip) {
     ggml_context * c = g.ctx();
     const std::string p = layer_name(l);
     const int64_t n = x->ne[1];
@@ -178,15 +185,17 @@ ggml_tensor * TextModel::experts(Graph & g, int l, ggml_tensor * x, ggml_tensor 
     ggml_tensor * weights = ggml_get_rows(c, ggml_reshape_3d(c, probabilities, 1, experts_, n), chosen);
     if (norm_topk_) weights = ggml_div(c, weights, ggml_reshape_3d(c, ggml_sum_rows(c, ggml_reshape_2d(c, weights, used_, n)), 1, 1, n));
     ggml_tensor * rows = ggml_reshape_3d(c, x, h_, 1, n);
-    ggml_tensor * gate = mul_mat_id(c, m_.tensor(p + "ffn_gate_exps"), rows, chosen);
-    ggml_tensor * up = mul_mat_id(c, m_.tensor(p + "ffn_up_exps"), rows, chosen);
-    ggml_tensor * down = mul_mat_id(c, m_.tensor(p + "ffn_down_exps"), ggml_mul(c, ggml_silu(c, gate), up), chosen);
+    const ModelFile & ex = g_experts ? *g_experts : m_;
+    ggml_tensor * gate = mul_mat_id(c, ex.tensor(p + "ffn_gate_exps"), rows, chosen);
+    ggml_tensor * up = mul_mat_id(c, ex.tensor(p + "ffn_up_exps"), rows, chosen);
+    ggml_tensor * down = mul_mat_id(c, ex.tensor(p + "ffn_down_exps"), ggml_mul(c, ggml_silu(c, gate), up), chosen);
     down = ggml_mul(c, down, weights);
     ggml_tensor * sum = nullptr;
     for (int e = 0; e < used_; e++) {
         ggml_tensor * one = ggml_view_2d(c, down, h_, n, down->nb[2], (size_t) e * down->nb[1]);
         sum = sum ? ggml_add(c, sum, one) : one;
     }
+    if (routed_only_skip) return sum;
     ggml_tensor * shared = mul_mat(c, m_.tensor(p + "ffn_down_shexp"),
                                    ggml_mul(c, ggml_silu(c, mul_mat(c, m_.tensor(p + "ffn_gate_shexp"), x)), mul_mat(c, m_.tensor(p + "ffn_up_shexp"), x)));
     shared = ggml_mul(c, shared, ggml_sigmoid(c, mul_mat(c, m_.tensor(p + "ffn_gate_inp_shexp"), x)));
@@ -240,6 +249,7 @@ std::vector<float> TextModel::run(const std::vector<float> & input, int64_t n, T
     out.reserve(input.size());
     for (int64_t from = 0; from < n; from += kBlockRows) {
         const int64_t rows = std::min(kBlockRows, n - from);
+        const auto tb = std::chrono::steady_clock::now();
         Graph g;
         ggml_context * c = g.ctx();
         ggml_tensor * x = g.input(std::vector<float>(input.begin() + from * h_, input.begin() + (from + rows) * h_), h_, rows);
@@ -251,11 +261,15 @@ std::vector<float> TextModel::run(const std::vector<float> & input, int64_t n, T
         for (int l = first_; l < last_; l++) {
             const std::string p = layer_name(l);
             ggml_tensor * h = ggml_mul(c, ggml_rms_norm(c, x, eps_), m_.tensor(p + "attn_norm"));
-            ggml_tensor * mixer = attention(l) ? attention_mixer(g, l, h, n_past_, pos, mask) : delta_mixer(g, l, h);
-            x = ggml_add(c, x, mixer);
+            static const char * skip = std::getenv("DRAMA3_SKIP");
+            const bool skip_mixer = skip && std::string(skip).find("mixer") != std::string::npos && rows == 1;
+            const bool skip_moe = skip && std::string(skip).find("moe") != std::string::npos && rows == 1;
+            const bool skip_shared = skip && std::string(skip).find("routed") != std::string::npos && rows == 1;
+            ggml_tensor * mixer = skip_mixer ? nullptr : attention(l) ? attention_mixer(g, l, h, n_past_, pos, mask) : delta_mixer(g, l, h);
+            if (mixer) x = ggml_add(c, x, mixer);
             ggml_tensor * router = nullptr;
-            ggml_tensor * moe = experts(g, l, ggml_mul(c, ggml_rms_norm(c, x, eps_), m_.tensor(p + "post_attn_norm")), &router);
-            x = ggml_add(c, x, moe);
+            ggml_tensor * moe = skip_moe ? nullptr : experts(g, l, ggml_mul(c, ggml_rms_norm(c, x, eps_), m_.tensor(p + "post_attn_norm")), &router, skip_shared);
+            if (moe) x = ggml_add(c, x, moe);
             if (stages) {
                 for (ggml_tensor * t : {mixer, router, moe, x}) g.output(t);
                 kept[(size_t) (l - first_)] = {mixer, router, moe, x};
@@ -263,7 +277,28 @@ std::vector<float> TextModel::run(const std::vector<float> & input, int64_t n, T
         }
         if (last_ == layers()) x = ggml_mul(c, ggml_rms_norm(c, x, eps_), m_.tensor("output_norm"));
         g.output(x);
-        g.compute(backend_, allocr_);
+        const auto tc = std::chrono::steady_clock::now();
+        if (g_cpu) {
+            if (!sched_) {
+                ggml_backend_t backends[2] = {backend_, g_cpu};
+                sched_ = ggml_backend_sched_new(backends, nullptr, 2, 65536, false, std::getenv("DRAMA3_NO_OFFLOAD") == nullptr);
+            }
+            g.compute_scheduled(sched_);
+            if (rows == 1 && std::getenv("DRAMA3_TIMING")) {
+                static int shown = 0;
+                if (shown++ == 0) std::fprintf(stderr, "scheduled row: %d splits, %d copies\n", ggml_backend_sched_get_n_splits(sched_), ggml_backend_sched_get_n_copies(sched_));
+            }
+        } else {
+            g.compute(backend_, allocr_);
+        }
+        const auto te = std::chrono::steady_clock::now();
+        if (rows == 1 && std::getenv("DRAMA3_TIMING")) {
+            static double build = 0, compute = 0;
+            static int calls = 0;
+            build += std::chrono::duration<double, std::milli>(tc - tb).count();
+            compute += std::chrono::duration<double, std::milli>(te - tc).count();
+            if (++calls % 50 == 0) std::fprintf(stderr, "text row: build %.2f ms, alloc+compute %.2f ms, nodes %d\n", build / calls, compute / calls, ggml_graph_n_nodes(g.cgraph()));
+        }
         if (stages) {
             for (int i = 0; i < count; i++) {
                 std::vector<float> * where[] = {&stages->mixer[(size_t) i], &stages->router[(size_t) i], &stages->moe[(size_t) i],

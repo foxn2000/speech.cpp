@@ -13,6 +13,10 @@
 
 namespace drama3 {
 
+/** Experiment: the experts' file on the CPU and the CPU's backend, when the experts compute there. */
+extern const ModelFile * g_experts;
+extern ggml_backend_t g_cpu;
+
 /**
  * What the layers of a run computed on the way, by layer, each [width, rows] with the channel fastest: the attention's
  * or the Gated DeltaNet's output, the router's logits, the experts' output with the shared expert's, and the layer's
@@ -80,11 +84,12 @@ private:
     ggml_tensor * attention_mixer(Graph & g, int l, ggml_tensor * x, int64_t first, ggml_tensor * pos, ggml_tensor * mask);
     ggml_tensor * delta_mixer(Graph & g, int l, ggml_tensor * x);
     /** The experts and the shared expert on `x`, and the router's logits in `router`. */
-    ggml_tensor * experts(Graph & g, int l, ggml_tensor * x, ggml_tensor ** router);
+    ggml_tensor * experts(Graph & g, int l, ggml_tensor * x, ggml_tensor ** router, bool routed_only_skip = false);
 
     ggml_backend_t backend_;
     const ModelFile & m_;
     ggml_gallocr_t allocr_ = nullptr;
+    ggml_backend_sched_t sched_ = nullptr;
     int first_ = 0, last_ = 0;
     std::vector<bool> types_;
     int h_ = 0, heads_ = 0, kv_heads_ = 0, head_dim_ = 0, rotary_dim_ = 0;

@@ -8,6 +8,7 @@
 #include "drama3/layout.h"
 #include "drama3/synthesizer.h"
 #include "drama3/voice-file.h"
+#include "backend.h"
 #include "engine.h"
 #include "error.h"
 #include "json.h"
@@ -40,7 +41,10 @@ double seconds_of(const ModelFile & m, int64_t frames) {
 
 class Drama3Engine : public Engine {
 public:
-    Drama3Engine(const std::string & path, ggml_backend_t backend) : model_(path, backend, drama3::model_layout), synth_(model_, backend) {
+    Drama3Engine(const std::string & path, ggml_backend_t backend)
+        : model_(path, backend, drama3::model_layout,
+                 [](const std::string & name) { return !drama3::g_experts || name.find("_exps") == std::string::npos; }),
+          synth_(model_, backend) {
         voices_.emplace(kNoReference, drama3::Voice{});
     }
 
@@ -139,7 +143,11 @@ FamilyInfo describe_drama3(const std::shared_ptr<const ModelFile> & file) {
     return info;
 }
 
-std::unique_ptr<Engine> load_drama3(const std::string & path, ggml_backend_t backend, int) {
+std::unique_ptr<Engine> load_drama3(const std::string & path, ggml_backend_t backend, int threads) {
+    if (std::getenv("DRAMA3_CPU_EXPERTS")) {
+        drama3::g_cpu = start_device(find_device("cpu"), threads > 0 ? threads : default_threads());
+        drama3::g_experts = new ModelFile(path, drama3::g_cpu, drama3::model_layout, [](const std::string & name) { return name.find("_exps") != std::string::npos; });
+    }
     return std::make_unique<Drama3Engine>(path, backend);
 }
 

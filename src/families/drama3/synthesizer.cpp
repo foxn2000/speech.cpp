@@ -1,5 +1,9 @@
 #include "synthesizer.h"
 
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+
 #include <algorithm>
 #include <deque>
 #include <optional>
@@ -40,9 +44,14 @@ Synthesizer::Chunk Synthesizer::speak(const std::vector<int32_t> & rows, const R
     const int64_t n = (int64_t) rows.size() / width;
     text_.start(n + r.max_frames);
     decoder_.start(n + r.max_frames);
+    using clock = std::chrono::steady_clock;
+    const auto since = [](clock::time_point t) { return std::chrono::duration<double, std::milli>(clock::now() - t).count(); };
+    double t_prefill = 0, t_logits = 0, t_decoder = 0, t_embed = 0, t_run = 0, t_codec = 0;
+    auto t0 = clock::now();
     const std::vector<float> hidden = text_.run(text_.embed(rows, n), n);
     // The audio decoder runs each prompt row with the frame after it, which the last row has yet to draw.
     decoder_.prefill(std::vector<float>(hidden.begin(), hidden.end() - h), rows, n - 1);
+    t_prefill = since(t0);
     std::vector<float> last(hidden.end() - h, hidden.end());
     std::vector<int32_t> frame(rows.end() - width, rows.end()), mains;
     for (int64_t i = 0; i < n; i++) mains.push_back(rows[(size_t) (i * width)]);
@@ -58,7 +67,10 @@ Synthesizer::Chunk Synthesizer::speak(const std::vector<int32_t> & rows, const R
         std::vector<int32_t> codes((size_t) (codebooks * count));
         for (int64_t f = 0; f < count; f++)
             for (int b = 0; b < codebooks; b++) codes[(size_t) (b * count + f)] = drawn[(size_t) (sent + f)][(size_t) b];
+        const auto tc = clock::now();
         const std::vector<float> audio = codec_.decode_more(codes, count);
+        t_codec += since(tc);
+        if (std::getenv("DRAMA3_TIMING")) std::fprintf(stderr, "codec window of %lld frames: %.1f ms\n", (long long) count, since(tc));
         sent = until;
         windows++;
         return sink(audio.data(), audio.size());
@@ -69,14 +81,18 @@ Synthesizer::Chunk Synthesizer::speak(const std::vector<int32_t> & rows, const R
             chunk.stopped = true;
             return chunk;
         }
+        t0 = clock::now();
         const int32_t main = sampler.main(text_.logits(last), mains, uniform(rng), uniform(rng));
+        t_logits += since(t0);
         if (main == eos_) {
             chunk.ended = true;
             break;
         }
+        t0 = clock::now();
         const std::vector<int32_t> codes = decoder_.step(last, frame, main, [&](int, const std::vector<float> & logits) {
             return sampler.code(logits, uniform(rng));
         });
+        t_decoder += since(t0);
         frame.assign(1, main);
         frame.insert(frame.end(), codes.begin(), codes.end());
         mains.push_back(main);
@@ -85,10 +101,22 @@ Synthesizer::Chunk Synthesizer::speak(const std::vector<int32_t> & rows, const R
             chunk.stopped = true;
             return chunk;
         }
-        if (step + 1 < r.max_frames) last = text_.run(text_.embed(frame, 1), 1);
+        if (step + 1 < r.max_frames) {
+            t0 = clock::now();
+            const std::vector<float> e = text_.embed(frame, 1);
+            t_embed += since(t0);
+            t0 = clock::now();
+            last = text_.run(e, 1);
+            t_run += since(t0);
+        }
     }
     if (!pass((int64_t) drawn.size())) chunk.stopped = true;
     chunk.frames = (int64_t) drawn.size();
+    if (std::getenv("DRAMA3_TIMING")) {
+        const double f = (double) std::max<int64_t>(1, chunk.frames);
+        std::fprintf(stderr, "timing: %lld prompt rows, prefill %.1f ms; %lld frames, per frame: logits+main %.2f, decoder %.2f, embed %.2f, run %.2f, codec %.2f ms\n",
+                     (long long) n, t_prefill, (long long) chunk.frames, t_logits / f, t_decoder / f, t_embed / f, t_run / f, t_codec / f);
+    }
     chunk.codes.resize((size_t) (codebooks * chunk.frames));
     for (int64_t f = 0; f < chunk.frames; f++)
         for (int b = 0; b < codebooks; b++) chunk.codes[(size_t) (b * chunk.frames + f)] = drawn[(size_t) f][(size_t) b];
