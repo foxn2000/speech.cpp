@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -117,16 +118,43 @@ int run_voice(const CommandLine & line, FILE *) {
     speech_voice_params * raw = nullptr;
     check(speech_voice_params_new(&raw));
     const std::unique_ptr<speech_voice_params, decltype(&speech_voice_params_free)> voice(raw, speech_voice_params_free);
-    // A voice is several recordings or one embedding; the library refuses an embedding beside recordings.
+    // A voice is several recordings and voice files, or one embedding; the library refuses an embedding beside them.
+    // The transcripts go to the recordings and the speakers to the recordings and voice files, each in order.
+    const std::vector<std::string> transcripts = line.values("--transcript"), speakers = line.values("--speaker");
     std::optional<std::string> embedding;
+    size_t recordings = 0, parts = 0;
     for (size_t i = 1; i + 1 < line.args.size(); i++) {
-        if (!is_embedding(line.args[i])) {
-            check(speech_voice_params_add_reference(raw, line.args[i].c_str()));
-        } else if (embedding) {
-            throw UsageError("give one embedding, not " + *embedding + " and " + line.args[i]);
-        } else {
-            embedding = line.args[i];
+        const std::string & input = line.args[i];
+        if (is_embedding(input)) {
+            if (embedding) throw UsageError("give one embedding, not " + *embedding + " and " + input);
+            embedding = input;
+            continue;
         }
+        const bool voice_file = input.size() > 5 && input.compare(input.size() - 5, 5, ".gguf") == 0;
+        check(voice_file ? speech_voice_params_add_voice(raw, input.c_str()) : speech_voice_params_add_reference(raw, input.c_str()));
+        if (!voice_file && !transcripts.empty()) {
+            if (recordings >= transcripts.size()) throw UsageError("give a --transcript for each recording, and " + input + " has none");
+            check(speech_voice_params_set_transcript(raw, transcripts[recordings].c_str()));
+        }
+        if (!speakers.empty()) {
+            if (parts >= speakers.size()) throw UsageError("give a --speaker for each recording and voice file, or none, and " + input + " has none");
+            char * end = nullptr;
+            const long speaker = std::strtol(speakers[parts].c_str(), &end, 10);
+            if (speakers[parts].empty() || *end != '\0' || speaker < 0 || speaker > INT_MAX) {
+                throw UsageError("--speaker takes a speaker's number from 0, not \"" + speakers[parts] + "\"");
+            }
+            check(speech_voice_params_set_speaker(raw, (int) speaker));
+        }
+        recordings += !voice_file;
+        parts++;
+    }
+    if (!transcripts.empty() && transcripts.size() != recordings) {
+        throw UsageError("give one --transcript for each recording: " + std::to_string(recordings) + " recordings and " + std::to_string(transcripts.size()) +
+                         " transcripts");
+    }
+    if (!speakers.empty() && speakers.size() != parts) {
+        throw UsageError("give one --speaker for each recording and voice file: " + std::to_string(parts) + " of them and " +
+                         std::to_string(speakers.size()) + " speakers");
     }
     if (embedding) {
         const Embedding e = read_embedding(*embedding);
@@ -236,7 +264,12 @@ void print_info(const speech_model_info * m, bool meta, FILE * out) {
             std::string name = speech_model_info_voice_name(m, i);
             row(i == 0 ? "voices" : "", name + std::string(name.size() < 14 ? 14 - name.size() : 1, ' ') + about);
         }
-        row("voice files", speech_model_info_voice_files(m) ? std::string("yes, of the codec ") + speech_model_info_voice_codec(m) : "no");
+        if (!speech_model_info_voice_files(m)) {
+            row("voice files", "no");
+        } else {
+            row("voice files", std::string("yes, of the codec ") + speech_model_info_voice_codec(m) +
+                                   (speech_model_info_voice_recordings(m) ? "; a WAVE file is added as a voice too" : "; made with speech voice"));
+        }
         row("text", "at most " + std::to_string(speech_model_info_max_text_tokens(m)) + " tokens");
     }
     size_t width = 16;
@@ -308,18 +341,25 @@ int run_devices(const CommandLine & line, FILE * out) {
 Command voice_command() {
     Command c;
     c.name = "voice";
-    c.usage = "voice MODEL (REFERENCE.wav... | EMBEDDING.speaker.safetensors) VOICE.gguf [options]";
-    c.summary = "make a voice file from reference recordings or a speaker-inversion embedding";
+    c.usage = "voice MODEL ((REFERENCE.wav | VOICE.gguf)... | EMBEDDING.speaker.safetensors) OUT.gguf [options]";
+    c.summary = "make a voice file from reference recordings, voice files or a speaker-inversion embedding";
     c.description =
         "Makes a voice file from one or more reference recordings in WAVE files at any rate, each encoded on its own and\n"
         "joined in order, reading only the codec's encoder from MODEL, for a model whose information says it takes voice\n"
         "files (Irodori-TTS). Each recording is brought to the model's loudness first, or to --lufs, or kept as it is with\n"
         "--keep-loudness. On the CPU, the default here, the voice's latent is the official encoder's to 99 dB SNR; a GPU\n"
         "computes it in less precision. A speaker-inversion embedding in a .speaker.safetensors file, as the official\n"
-        "runtime saves one, makes a voice of its own for MODEL, which no other model takes.";
+        "runtime saves one, makes a voice of its own for MODEL, which no other model takes.\n"
+        "\n"
+        "Drama 3 reads each recording's words beside it, given by --transcript in the order of the recordings, and gives\n"
+        "each recording or voice file one of the speakers a text names, by --speaker in their order: a recording is\n"
+        "speaker 0's and a voice file keeps its speakers unless one is given. A voice file of Drama 3 as an input adds its\n"
+        "recordings as they are, so that a voice of several speakers is put together from voices made before.";
     c.flags = {
         {"--lufs", "LUFS", false, "the loudness each recording is brought to, instead of the model's (-16)"},
         {"--keep-loudness", "", false, "keep each recording's loudness, scaling down a peak above 1"},
+        {"--transcript", "TEXT", true, "Drama 3: the words of a recording, one for each in their order"},
+        {"--speaker", "N", true, "Drama 3: the speaker of a recording or voice file, one for each in their order"},
         device_flag("cpu (the default here), auto, gpu or a name `speech devices` lists"),
         threads_flag(),
         verbose_flag("also report the release and the device"),

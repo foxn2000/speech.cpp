@@ -42,12 +42,23 @@ struct OptionSpec {
 };
 
 /**
- * What a voice file is made of: reference recordings, joined in the order given, and the loudness each is brought to
- * before it is encoded, the model's unless `lufs` gives another, or the recording's own without `normalize`; or,
- * instead of recordings, a speaker-inversion embedding of `embedding_tokens` vectors, row by row.
+ * A part of a voice: a reference recording in a WAVE file, with the words it speaks where they were given, or a voice
+ * file of the family whose references it takes as they are; and the speaker it is given, where one was.
+ */
+struct VoicePart {
+    bool voice_file = false;
+    std::string path;
+    std::optional<std::string> transcript;
+    std::optional<int> speaker;
+};
+
+/**
+ * What a voice file is made of: its parts, in the order given, and the loudness each recording is brought to before it
+ * is encoded, the model's unless `lufs` gives another, or the recording's own without `normalize`; or, instead of
+ * parts, a speaker-inversion embedding of `embedding_tokens` vectors, row by row.
  */
 struct VoiceRecipe {
-    std::vector<std::string> references;
+    std::vector<VoicePart> parts;
     bool normalize = true;
     std::optional<double> lufs;
     std::vector<float> embedding;
@@ -80,6 +91,8 @@ struct FamilyInfo {
     std::vector<VoiceInfo> voices;
     /** The hash a voice file must carry, for a family that takes voice files. */
     std::string voice_codec;
+    /** Whether add_voice() takes a recording in a WAVE file, which it encodes, besides a voice file. */
+    bool voice_recordings = false;
     size_t max_text_tokens = 0;
     std::vector<OptionSpec> options;
     /** What the file lacks of what the family takes, which a request is refused with by its own message. */
@@ -233,8 +246,11 @@ public:
      */
     virtual std::unique_ptr<DetectionStream> start_detection(const RequestValues & values);
 
-    /** Adds a voice from a voice file or a WAVE file under a name the C API has checked is new. */
-    virtual void add_voice(const std::string & name, const std::string & path);
+    /**
+     * Adds a voice from a voice file or a WAVE file under a name the C API has checked is new, and returns what the
+     * model information says of it, or "" for nothing.
+     */
+    virtual std::string add_voice(const std::string & name, const std::string & path);
 
     /** Runs a short request of the model's task, so that a GPU compiles its kernels before the first request. */
     virtual void warm_up() = 0;
@@ -252,6 +268,7 @@ void make_irodori_tts_voice(const std::string & model_path, const VoiceRecipe & 
 
 FamilyInfo describe_drama3(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_drama3(const std::string & path, ggml_backend_t backend, int threads);
+void make_drama3_voice(const std::string & model_path, const VoiceRecipe & recipe, const std::string & voice_path, ggml_backend_t backend);
 
 FamilyInfo describe_fastconformer(const std::shared_ptr<const ModelFile> & file);
 std::unique_ptr<Engine> load_fastconformer(const std::string & path, ggml_backend_t backend, int threads);

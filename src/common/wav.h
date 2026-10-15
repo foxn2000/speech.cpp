@@ -19,5 +19,8 @@ Wav read_wav(const std::string & path);
 /** The same for a WAVE file's bytes, which `path` names in a message. */
 Wav parse_wav(const std::string & file, const std::string & path);
 
+/** Whether the file at `path` begins as a WAVE file does, with "RIFF"; a file that cannot be opened throws. */
+bool starts_with_riff(const std::string & path);
+
 /** Writes mono 16-bit PCM, clipping to [-1, 1]. */
 void write_wav(const std::string & path, const std::vector<float> & samples, int sample_rate);

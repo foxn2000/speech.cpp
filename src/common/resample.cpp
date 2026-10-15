@@ -9,9 +9,11 @@
 
 namespace {
 
-constexpr double kZeroCrossings = 64;
-constexpr double kRolloff = 0.9475937167399596;
+constexpr double kKaiserZeroCrossings = 64;
+constexpr double kKaiserRolloff = 0.9475937167399596;
 constexpr double kBeta = 14.769656459379492;
+constexpr double kHannZeroCrossings = 6;
+constexpr double kHannRolloff = 0.99;
 constexpr double kPi = 3.141592653589793;
 
 /**
@@ -35,7 +37,7 @@ double bessel_i0(double x) {
 
 }  // namespace
 
-Resampler::Resampler(int from_rate, int to_rate) {
+Resampler::Resampler(int from_rate, int to_rate, ResampleFilter filter) {
     const std::string rates = "from " + std::to_string(from_rate) + " Hz to " + std::to_string(to_rate) + " Hz";
     if (from_rate <= 0 || to_rate <= 0) {
         throw std::invalid_argument("cannot resample " + rates + ": a sample rate is a positive number of Hz; give the rate "
@@ -51,15 +53,17 @@ Resampler::Resampler(int from_rate, int to_rate) {
     }
     if (from_ == to_) return;
     // torchaudio's _get_sinc_resample_kernel() step by step, so that each tap is torchaudio's to the last bit or two.
-    const double base = std::min(from_, to_) * kRolloff;
-    width_ = (long long) std::ceil(kZeroCrossings * from_ / base);
+    const bool hann = filter == ResampleFilter::Hann;
+    const double crossings = hann ? kHannZeroCrossings : kKaiserZeroCrossings;
+    const double base = std::min(from_, to_) * (hann ? kHannRolloff : kKaiserRolloff);
+    width_ = (long long) std::ceil(crossings * from_ / base);
     const double scale = base / from_;
     // torchaudio makes beta a float32 tensor, so its window's beta is kBeta rounded to float32 and the window's peak
     // i0(beta), which it divides by, is computed in float32 (271903.5625 with torch 2.10.0, the double value
     // rounded). With exact values the output departs from torchaudio's by up to 1.1e-8, 154 dB SNR.
     const double beta = (float) kBeta;
     const double peak = (float) bessel_i0(beta);
-    // torchaudio evaluates 2 · width + from taps per phase and clamps those past the 64th zero crossing to it, where
+    // torchaudio evaluates 2 · width + from taps per phase and clamps those past the last zero crossing to it, where
     // each is below 1e-21; only the taps before it are kept.
     const long long span = 2 * width_ + from_;
     std::vector<std::vector<double>> phases((size_t) to_);
@@ -67,10 +71,11 @@ Resampler::Resampler(int from_rate, int to_rate) {
     for (int j = 0; j < to_; j++) {
         for (long long k = 0; k < span; k++) {
             const double t = ((double) -j / to_ + (double) (k - width_) / from_) * base;
-            if (std::fabs(t) >= kZeroCrossings) continue;
+            if (std::fabs(t) >= crossings) continue;
             if (phases[j].empty()) first_[j] = k;
-            const double r = t / kZeroCrossings;
-            const double window = bessel_i0(beta * std::sqrt(1 - r * r)) / peak;
+            const double r = t / crossings;
+            const double half_cosine = std::cos(t * kPi / crossings / 2);
+            const double window = hann ? half_cosine * half_cosine : bessel_i0(beta * std::sqrt(1 - r * r)) / peak;
             const double x = t * kPi;
             phases[j].push_back((x == 0 ? 1.0 : std::sin(x) / x) * (window * scale));
         }
@@ -131,7 +136,7 @@ std::vector<double> Resampler::in_double(const std::vector<float> & samples) con
     return apply<double>(samples);
 }
 
-ResampleStream::ResampleStream(int from_rate, int to_rate) : resampler_(from_rate, to_rate) {}
+ResampleStream::ResampleStream(int from_rate, int to_rate, ResampleFilter filter) : resampler_(from_rate, to_rate, filter) {}
 
 void ResampleStream::push(const float * samples, size_t n, std::vector<float> & out) {
     if (resampler_.unchanged()) {

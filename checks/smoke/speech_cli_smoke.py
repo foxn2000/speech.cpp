@@ -9,7 +9,10 @@ content and through a pipe into cat, where the header cannot be written again in
 0xFFFFFFFF; that nothing but the WAVE reaches stdout and a failed run leaves no file; for Qwen3-TTS a stop at
 --max-seconds reported on stderr, and boolean and sampling flags against the worker's members; --instructions against
 the worker's member where the model takes it and its refusal where it does not; with --reference a voice file made by
-`speech voice` that `speech tts` speaks with; with --embedding one made of a speaker-inversion embedding; on a model
+`speech voice` that `speech tts` speaks with, and for a model that needs a recording's words (Drama 3), with
+--transcript, one of the recording and its transcript, one of it put together as two speakers that `speech tts` speaks
+a scene with, and the refusals of a recording without its transcript, of transcripts that are not one a recording and
+of a recording given to --add-voice; with --embedding one made of a speaker-inversion embedding; on a model
 that reads a text in one request, a text of two sentences as the worker's one request of it; and on a model that speaks
 a text a sentence at a time (Irodori-TTS), a paragraph of thirty sentences in one request a sentence, whose seed
 reported with -v repeats the WAVE byte for byte and which, with --asr a recognition model, is heard within
@@ -30,7 +33,7 @@ each region holding its samples as 16-bit PCM, named so that they sort in order,
 name and of a file named as another's region in the folder, left as it was; and `speech asr` of the detection model with
 --vad, refused on a file without speech.
 
-usage: python3 checks/smoke/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav]
+usage: python3 checks/smoke/speech_cli_smoke.py <speech> <work dir> <model.gguf> [dump folder... | --reference REF.wav [--transcript TEXT]]
                                                 [--embedding E.speaker.safetensors] [--vad DETECTION.gguf] [--asr RECOGNITION.gguf]
                                                 [-- load options...]
 """
@@ -57,6 +60,11 @@ reference = None
 if "--reference" in args:
     at = args.index("--reference")
     reference = args[at + 1]
+    del args[at:at + 2]
+transcript = None
+if "--transcript" in args:
+    at = args.index("--transcript")
+    transcript = args[at + 1]
     del args[at:at + 2]
 embedding = None
 if "--embedding" in args:
@@ -287,7 +295,27 @@ if info["task"] == "synthesis":
         # A line of a space that Unicode names whitespace alone, here a no-break space, is no sentence of its own.
         run("tts", model, "-o", path, "--voice", voice, *options, "今日は晴れです。\n\u00a0\n明日も晴れです。")
         print("two sentences around a line of a no-break space: spoken")
-    if reference:
+    if reference and not info["voice_recordings"]:
+        assert transcript, "a model that needs a recording's words needs --transcript beside --reference"
+        made = os.path.join(work, "speech-cli-smoke.voice.gguf")
+        cast = os.path.join(work, "speech-cli-smoke.cast.voice.gguf")
+        failure(run("voice", model, reference, made, code=1), "invalid_argument", "transcript")
+        run("voice", model, reference, made, "--transcript", transcript, "--transcript", transcript, code=2)
+        run("voice", model, reference, made, "--speaker", "0", "--speaker", "1", "--transcript", transcript, code=2)
+        assert not os.path.exists(made), "a refused voice file was written"
+        run("voice", model, reference, made, "--transcript", transcript)
+        run("voice", model, made, made, cast, "--speaker", "0", "--speaker", "1")
+        run("tts", model, "-o", path, "--add-voice", f"cast={cast}", "--voice", "cast", *options, "<|speaker:0|> はい。<|speaker:1|> いいえ。")
+        os.remove(path)
+        message = failure(run("tts", model, "-o", path, "--add-voice", f"x={reference}", "--voice", "x", *options, lines[0], code=1),
+                          "invalid_argument", "path")
+        assert not os.path.exists(path), message
+        os.remove(made)
+        os.remove(cast)
+        print("speech voice made a voice file of a recording and its transcript and put it together as two speakers, which speech tts "
+              "spoke a scene with; a recording without its transcript (exit 1), transcripts or speakers not one each (exit 2) and a "
+              "recording given to --add-voice (exit 1) were refused")
+    elif reference:
         made = os.path.join(work, "speech-cli-smoke.voice.gguf")
         run("voice", model, reference, made)
         run("tts", model, "-o", path, "--add-voice", f"made={made}", "--voice", "made", *options, lines[0])

@@ -127,7 +127,7 @@ source](docs/install.md#build-from-source).
 | `speech tts` | speaks text into a WAVE file or to stdout |
 | `speech asr` | writes the text of WAVE files, or of the microphone as someone speaks |
 | `speech vad` | writes where someone speaks in WAVE files |
-| `speech voice` | makes an Irodori-TTS voice file from reference recordings |
+| `speech voice` | makes a voice file for Irodori-TTS or Drama 3 from reference recordings |
 | `speech info` | prints what a model file says of its model |
 | `speech devices` | lists the devices a model can run on |
 | `speech models`, `pull`, `rm` | list, fetch and remove models |

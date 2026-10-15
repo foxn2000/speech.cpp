@@ -7,7 +7,7 @@ This page lists the subcommands of `speech` and their options. `speech <subcomma
 | [`speech tts`](#speech-tts) | speaks text into a WAVE file or to stdout |
 | [`speech asr`](#speech-asr) | writes the text of WAVE files, or of the microphone as someone speaks |
 | [`speech vad`](#speech-vad) | writes where someone speaks in WAVE files |
-| [`speech voice`](#speech-voice) | makes an Irodori-TTS voice file from reference recordings |
+| [`speech voice`](#speech-voice) | makes a voice file for Irodori-TTS or Drama 3 from reference recordings |
 | [`speech info`](#speech-info) | prints what a model file says of its model, without loading it |
 | [`speech devices`](#speech-devices) | lists the devices a model can run on |
 | [`speech models`](#speech-models) | lists the models a name fetches, what is fetched, and which model to start with |
@@ -96,7 +96,7 @@ speech tts MODEL -o FILE|- [options] [TEXT]
 - Irodori-TTS, which speaks at most 30 s at a time, speaks a text of several sentences one sentence at a time, with a
   pause of 0.9 s between them; a sentence too long for it is cut at its commas, or at its spaces. A run of text with
   neither that is too long fails. Qwen3-TTS speaks a text whole, up to 24565 tokens.
-- `--voice` is required. Qwen3-TTS has named speakers; Irodori-TTS takes voices added with `--add-voice`
+- `--voice` is required. Qwen3-TTS has named speakers; Irodori-TTS and Drama 3 take voices added with `--add-voice`
   ([models.md](models.md#voices)).
 - `--seed` applies to every text and every sentence. Without it, each text draws its own seed, which `-v` reports; the
   same seed gives the same audio on the same device.
@@ -216,19 +216,34 @@ speech vad MODEL [options] AUDIO.wav...
 ## speech voice
 
 ```
-speech voice MODEL (REFERENCE.wav... | EMBEDDING.speaker.safetensors) VOICE.gguf [options]
-  --lufs LUFS              bring each recording to this loudness instead of the model's (-16)
-  --keep-loudness          keep each recording's loudness, scaling down a peak above 1
+speech voice MODEL ((REFERENCE.wav | VOICE.gguf)... | EMBEDDING.speaker.safetensors) OUT.gguf [options]
+  --lufs LUFS              Irodori-TTS: bring each recording to this loudness instead of the model's (-16)
+  --keep-loudness          Irodori-TTS: keep each recording's loudness, scaling down a peak above 1
+  --transcript TEXT        Drama 3: the words of a recording, one for each recording in their order
+  --speaker N              Drama 3: the speaker of a recording or voice file, one for each in their order
   --device NAME            cpu (the default here), auto, gpu or a name speech devices lists
   --threads N -v
 ```
 
-- Makes a voice file for a model that takes voice files (Irodori-TTS) from one or more recordings at any rate. Each is
-  encoded on its own and the results are joined in order. Only the codec's encoder is read from MODEL.
-- A `.speaker.safetensors` file, a speaker-inversion embedding as the official runtime saves one, makes a voice for MODEL
-  alone. It is the whole voice: a second embedding or a recording beside it is refused.
+- Makes a voice file for a model that takes voice files (Irodori-TTS, Drama 3) from one or more recordings at any rate.
+  Each is encoded on its own and the results are joined in order. Only the codec is read from MODEL.
+- Drama 3 needs the words each recording speaks, one `--transcript` per recording. A recording is speaker 0 unless
+  `--speaker` gives another, and a Drama 3 voice file given as an input keeps its speakers unless `--speaker` gives one.
+  So a voice for a scene is put together from voices made before, without encoding them again:
+
+  ```sh
+  speech voice Drama-35B-A3B-v3-Q4_K.gguf woman.wav --transcript "今日はいい天気ですね。" woman.voice.gguf
+  speech voice Drama-35B-A3B-v3-Q4_K.gguf man.wav --transcript "明日は雨の予報です。" man.voice.gguf
+  speech voice Drama-35B-A3B-v3-Q4_K.gguf woman.voice.gguf man.voice.gguf --speaker 0 --speaker 1 cast.voice.gguf
+  speech tts Drama-35B-A3B-v3-Q4_K.gguf --add-voice cast=cast.voice.gguf --voice cast -o scene.wav \
+    "<|speaker:0|> 晴れたね。<|speaker:1|> 明日は雨だって。"
+  ```
+
+- A `.speaker.safetensors` file, a speaker-inversion embedding as Irodori-TTS's runtime saves one, makes a voice for
+  MODEL alone. It is the whole voice: a second embedding or a recording beside it is refused.
 - The device is `cpu` by default, which encodes a voice closest to the official encoder.
-- [models/irodori-tts.md](models/irodori-tts.md#voices) says what a voice file holds.
+- [models/irodori-tts.md](models/irodori-tts.md#voices) and [models/drama3.md](models/drama3.md#voices) say what a
+  voice file holds.
 
 ## speech info
 

@@ -7,9 +7,11 @@
 
 #include "drama3/layout.h"
 #include "drama3/synthesizer.h"
+#include "drama3/voice-file.h"
 #include "engine.h"
 #include "error.h"
 #include "json.h"
+#include "wav.h"
 
 namespace {
 
@@ -69,6 +71,18 @@ public:
         return ending == drama3::Ending::MaxFrames ? SPEECH_STOP_MAX_SECONDS : SPEECH_STOP_COMPLETE;
     }
 
+    std::string add_voice(const std::string & name, const std::string & path) override {
+        // A recording alone lacks the words Drama 3 reads beside it.
+        if (starts_with_riff(path)) {
+            throw Error(Fault::InvalidArgument,
+                        path + " is a recording, and a Drama 3 voice needs its transcript too; make a voice file of it with speech voice and --transcript",
+                        "path");
+        }
+        const std::vector<drama3::VoiceReference> references = drama3::read_voice_file(path, model_);
+        voices_.emplace(name, drama3::voice_of(references));
+        return drama3::describe_speakers(references);
+    }
+
     void warm_up() override {
         // The first synthesis compiles the GPU kernels, which on Vulkan takes seconds: a prompt, a few frames and a
         // window of the codec run every graph.
@@ -107,6 +121,7 @@ FamilyInfo describe_drama3(const std::shared_ptr<const ModelFile> & file) {
     FamilyInfo info;
     info.incremental = true;
     info.voices.push_back({kNoReference, "", "", "speaks every speaker of the text in a voice of the model's choosing"});
+    info.voice_codec = m.str("drama3.codec.sha256");
     info.max_text_tokens = m.size("drama3.generation.max_prompt_rows");
     const drama3::Sampling card = drama3::file_sampling(m);
     info.options = {
@@ -126,4 +141,14 @@ FamilyInfo describe_drama3(const std::shared_ptr<const ModelFile> & file) {
 
 std::unique_ptr<Engine> load_drama3(const std::string & path, ggml_backend_t backend, int) {
     return std::make_unique<Drama3Engine>(path, backend);
+}
+
+void make_drama3_voice(const std::string & model_path, const VoiceRecipe & recipe, const std::string & voice_path, ggml_backend_t backend) {
+    if (!recipe.embedding.empty() || !recipe.normalize || recipe.lufs) {
+        throw Error(Fault::InvalidArgument, "Drama 3 takes its recordings as they are, without an embedding or a loudness; leave them out",
+                    !recipe.embedding.empty() ? "embedding" : "loudness");
+    }
+    std::vector<drama3::VoiceSource> sources;
+    for (const VoicePart & part : recipe.parts) sources.push_back({part.voice_file, part.path, part.transcript, part.speaker});
+    drama3::make_voice_file(model_path, sources, voice_path, backend);
 }

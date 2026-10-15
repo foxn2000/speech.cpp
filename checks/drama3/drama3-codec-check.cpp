@@ -6,7 +6,10 @@
 // longer than the transformer's attention reaches through its layers, in windows of 4, 8, 16, 32, 64 and then 128
 // frames, against decoding them at once.
 //
-// usage: drama3-codec-check <model.gguf> <dump dir> [gpu|cpu|device name] [out.wav]
+// With the dump's reference recording, also its reading, mixed to mono and resampled to the codec's rate as a voice
+// file reads it, against the official reading, and the codes of that reading against the official codes.
+//
+// usage: drama3-codec-check <model.gguf> <dump dir> [reference.wav] [gpu|cpu|device name]
 
 #include <chrono>
 #include <cstdio>
@@ -18,9 +21,9 @@
 #include "compare.h"
 #include "drama3/codec.h"
 #include "drama3/layout.h"
+#include "drama3/voice-file.h"
 #include "ggml-cpu.h"
 #include "npy.h"
-#include "wav.h"
 #include "weight-types.h"
 
 using namespace drama3;
@@ -76,12 +79,15 @@ void print_agreement(const std::string & what, const std::vector<double> & share
 int main(int argc, char ** argv) {
     const std::vector<std::string> args = utf8_args(argc, argv);
     if (args.size() < 3) {
-        std::fprintf(stderr, "usage: %s <model.gguf> <dump dir> [gpu|cpu|device name] [out.wav]\n", args[0].c_str());
+        std::fprintf(stderr, "usage: %s <model.gguf> <dump dir> [reference.wav] [gpu|cpu|device name]\n", args[0].c_str());
         return 2;
     }
     const std::string dir = args[2];
+    const auto is_wav = [](const std::string & a) { return a.size() > 4 && a.compare(a.size() - 4, 4, ".wav") == 0; };
+    const std::string reference = args.size() > 3 && is_wav(args[3]) ? args[3] : "";
+    const size_t device_arg = reference.empty() ? 3 : 4;
     if (!takes_weights(args[1], model_layout, {"F32"}, "its thresholds are those measured with them")) return 2;
-    ggml_backend_t backend = init_backend(args.size() > 3 ? args[3] : "");
+    ggml_backend_t backend = init_backend(args.size() > device_arg ? args[device_arg] : "");
     std::printf("backend: %s\n", ggml_backend_name(backend));
     const ModelFile model(args[1], backend, model_layout, [](const std::string & name) { return name.rfind("codec.", 0) == 0; });
     Codec codec(model, backend);
@@ -127,7 +133,17 @@ int main(int argc, char ** argv) {
     const Diff da = compare(decoded, official.f32);
     print_diff("audio", da);
     ok = ok && decoded.size() == official.f32.size() && da.snr_db > decoder_db;
-    if (args.size() > 4) write_wav(args[4], decoded, codec.sample_rate());
+    if (!reference.empty()) {
+        const std::vector<float> read = read_recording(reference, codec.sample_rate());
+        const Diff dr = compare(read, audio.f32);
+        print_diff("reading the WAVE file", dr);
+        const std::vector<double> codes_read = agreement(codec.encode(read), reference_codes.i32, codec.codebooks());
+        print_agreement("codes of the reading", codes_read);
+        // Measured on an Apple M5 on 2026-10-15: 129.2 dB on any device, since the reading runs on the host, and every
+        // code of the reading the official one on the CPU, 88 to 99% of each codebook's on Metal. librosa's kaiser_best
+        // filter in place of torchaudio's default gives 66.5 dB, and 73 to 98% of the codes on the CPU.
+        ok = ok && read.size() == audio.f32.size() && dr.snr_db > 100;
+    }
 
     const int64_t reference_frames = reference_codes.shape[1];
     const std::vector<float> whole = codec.decode(reference_codes.i32, reference_frames);

@@ -162,8 +162,10 @@ def check_model_information(speech, model, loaded, added_voices=()):
     """Checks the information of a loaded model against `speech info --json` of its file and the voices added to it."""
     r = subprocess.run([speech, "info", model, "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     want = json.loads(r.stdout)
+    # What the library says of an added voice is read from its file, which the model file's information cannot give.
+    said = {v["name"]: v["description"] for v in loaded.get("voices", []) if isinstance(v.get("description"), str)}
     for name in added_voices:
-        want["voices"].append({"name": name, "language": "", "gender": "", "description": ""})
+        want["voices"].append({"name": name, "language": "", "gender": "", "description": said.get(name, "")})
         for option in want["options"]:
             if option["name"] == "voice":
                 option["choices"].append(name)

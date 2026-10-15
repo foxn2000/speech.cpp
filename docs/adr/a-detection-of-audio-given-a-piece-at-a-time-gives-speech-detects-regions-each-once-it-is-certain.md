@@ -47,7 +47,7 @@ with the number of chunks its graph held (Apple M5, 2026-10-08).
   never for a noise it then drops. `speech_detection_speaking()` gives it beside the start, in one call that reads one
   region: whether a region has begun, its start, and whether it is kept.
 - **The library resamples the pieces** with the filter of the whole audio
-  ([the record of resampling](the-library-resamples-input-audio-with-torchaudios-kaiser-best-filter.md)), which holds
+  ([the record of resampling](the-library-resamples-input-audio-with-torchaudios-kaiser-best-filter-and-drama3-references-as-fish-speech-does.md)), which holds
   back the half of the filter after the last sample until more arrives: 4.2 to 4.3 ms from 24, 32, 44.1 or 48 kHz to
   16 kHz, 8.6 ms from 8 kHz.
 - **A push holds the model as a request does**, so that several detections and the model's requests share one model.

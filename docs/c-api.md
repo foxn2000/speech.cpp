@@ -121,20 +121,23 @@ and link `speech.lib`. Inside this CMake project, link the target `speech` (shar
     request. It is off by default; `speech worker` and `speech serve` turn it on.
 - **Model information.** `speech_model_info_open()` reads what a model file says of its model from its metadata, without
   its weights or a device: its identity, architecture and layout, task and sample rate, languages, voices, whether it
-  takes voice files and the codec they must carry, the longest text, the options it takes, its sizes, and every metadata
+  takes voice files, the codec they must carry and whether a recording alone makes one, the longest text, the options it takes, its sizes, and every metadata
   entry. `speech_model_get_info()` gives the same for a loaded model, with the device, the threads in effect and the
   voices added. `speech_model_info_text_tokens()` counts a text's tokens as a synthesis counts them against the longest
   text, so that a caller can split a long text first. `speech_model_info_json()` writes the whole as one JSON object
   (below).
 - **Quantizing.** `speech_quantize()` writes a model file of F32 weights in F16, Q8_0, Q6_K, Q5_K or Q4_K, on the CPU,
   as `speech quantize` does ([cli.md](cli.md#speech-quantize)). Silero VAD's file is F32 alone, and is refused.
-- **Voices.** `speech_voice_add()` adds a voice to a loaded model from a voice file or a reference WAVE file at any rate.
-  `speech_voice_make()` writes a voice file from a reference, reading only the codec's encoder from the model file.
-  `speech_voice_make_from()` writes one from the parameters `speech_voice_params_new()` makes: several references
-  (`speech_voice_params_add_reference()`), another loudness (`speech_voice_params_set_loudness()`) or the recordings' own
-  (`speech_voice_params_keep_loudness()`), or a speaker-inversion embedding instead
-  (`speech_voice_params_set_embedding()`). A model that takes no voice files answers all three with
-  `SPEECH_ERROR_UNSUPPORTED` ([models/irodori-tts.md](models/irodori-tts.md#voices)).
+- **Voices.** `speech_voice_add()` adds a voice to a loaded model from a voice file, or from a reference WAVE file at any
+  rate where `speech_model_info_voice_recordings()` says so. `speech_voice_make()` writes a voice file from a reference,
+  reading only the codec from the model file. `speech_voice_make_from()` writes one from the parameters
+  `speech_voice_params_new()` makes: several references (`speech_voice_params_add_reference()`), another loudness
+  (`speech_voice_params_set_loudness()`) or the recordings' own (`speech_voice_params_keep_loudness()`), or a
+  speaker-inversion embedding instead (`speech_voice_params_set_embedding()`); for Drama 3, each reference's words
+  (`speech_voice_params_set_transcript()`), voice files made before (`speech_voice_params_add_voice()`) and the speaker
+  each reference or voice file is given (`speech_voice_params_set_speaker()`). A model that takes no voice files answers
+  all three with `SPEECH_ERROR_UNSUPPORTED` ([models/irodori-tts.md](models/irodori-tts.md#voices),
+  [models/drama3.md](models/drama3.md#voices)).
 - **Requests.** `speech_request_new()` makes a request for one model. It takes a text (`speech_request_set_text()`) or
   audio (`speech_request_set_audio()`), and options through the setter of each option's type. `speech_synthesize()`
   passes the audio to its callback as it is made, `speech_transcribe()` recognizes the whole audio at once, and
@@ -310,6 +313,7 @@ loaded on Metal, with two of its nine voices and four of its options shown:
     {"name": "ono_anna", "language": "ja", "gender": "female", "description": "Playful Japanese female voice."}
   ],
   "voice_files": false,
+  "voice_recordings": false,
   "max_text_tokens": 24565,
   "options": [
     {"name": "voice", "type": "string", "required": true, "steers": true, "choices": ["aiden", "dylan", "eric", "ono_anna", "ryan", "serena", "sohee", "uncle_fu", "vivian"]},
@@ -333,10 +337,12 @@ loaded on Metal, with two of its nine voices and four of its options shown:
 - `incremental` is true for a model that passes audio while it still makes the rest (Qwen3-TTS, Drama 3), so that its first
   audio does not wait on the length of the text, and false for one that makes a request's whole speech before it decodes
   it (Irodori-TTS).
-- Each voice's `language`, `gender` and `description` are `""` where the file does not say; a voice added from a voice
-  file or a recording says none. A recognition or detection model has no `voices`, `incremental` or `max_text_tokens`.
+- Each voice's `language`, `gender` and `description` are `""` where the file does not say. A voice added from a voice
+  file or a recording says none, but for Drama 3, whose description names the voice's speakers (`speakers 0 and 1`). A
+  recognition or detection model has no `voices`, `incremental` or `max_text_tokens`.
 - `voice_files` is true for a model that takes voices made from recordings; `voice_codec` then follows it, the hash a
-  voice file must carry.
+  voice file must carry. `voice_recordings` is true for a model that adds a voice from a WAVE file as well (Irodori-TTS),
+  and false for one that needs a voice file (Drama 3, whose voice files hold each recording's words).
 - An option has `type` (`string`, `int`, `float`, `bool`), `required`, `steers`, and where they apply `default`,
   `minimum` or `exclusive_minimum`, `maximum`, and `choices`.
 - `device` and `threads` are there for a loaded model alone. `threads` is the number of CPU threads in effect for a model

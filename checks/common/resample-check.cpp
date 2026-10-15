@@ -1,5 +1,5 @@
-// Checks the resampler against torchaudio.functional.resample() in float64 with librosa's kaiser_best parameters, on
-// the chirps and the noise of reference/resample/dump.py: each output has torchaudio's length and its samples, to what
+// Checks the resampler against torchaudio.functional.resample() in float64 with librosa's kaiser_best parameters, and
+// with its default Hann filter where a dump's name ends in -hann, on the chirps and the noise of reference/resample/dump.py: each output has torchaudio's length and its samples, to what
 // double precision explains. Each input given a piece at a time, in pieces of one sample, 10 ms and 100 ms and of random
 // sizes from a fixed seed, must give the whole input's float samples bit for bit. Then checks that audio at the rate it
 // is asked for passes through unchanged, whole and in pieces.
@@ -24,8 +24,8 @@
 namespace {
 
 /** The samples at `to` Hz of `input` given in pieces of `size` samples, or of random sizes for 0. */
-std::vector<float> in_pieces(int from, int to, const std::vector<float> & input, size_t size) {
-    ResampleStream stream(from, to);
+std::vector<float> in_pieces(int from, int to, const std::vector<float> & input, size_t size, ResampleFilter filter = ResampleFilter::KaiserBest) {
+    ResampleStream stream(from, to, filter);
     std::vector<float> out;
     std::mt19937 draw(20261008);
     for (size_t at = 0; at < input.size();) {
@@ -60,7 +60,8 @@ int main(int argc, char ** argv) {
             const Npy input = read_npy((d / "input.npy").u8string());
             const Npy want = read_npy((d / "output.npy").u8string());
             const auto t0 = std::chrono::steady_clock::now();
-            const std::vector<double> got = Resampler(from, to).in_double(input.f32);
+            const ResampleFilter filter = name.size() > 5 && name.compare(name.size() - 5, 5, "-hann") == 0 ? ResampleFilter::Hann : ResampleFilter::KaiserBest;
+            const std::vector<double> got = Resampler(from, to, filter).in_double(input.f32);
             const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
             const Diff diff = compare(got, want.f64);
             std::printf("%-22s %zu -> %zu samples (torchaudio %zu), %.3f s\n", name.c_str(), input.f32.size(), got.size(),
@@ -71,10 +72,10 @@ int main(int argc, char ** argv) {
             // float32, gives 154 dB, and taps rounded to float32 149 dB.
             ok = ok && got.size() == want.f64.size() && diff.snr_db > 250;
 
-            const std::vector<float> whole = Resampler(from, to)(input.f32);
+            const std::vector<float> whole = Resampler(from, to, filter)(input.f32);
             bool same = true;
             for (const size_t size : {(size_t) 1, (size_t) from / 100, (size_t) from / 10, (size_t) 0}) {
-                const std::vector<float> streamed = in_pieces(from, to, input.f32, size);
+                const std::vector<float> streamed = in_pieces(from, to, input.f32, size, filter);
                 same = same && streamed.size() == whole.size() && std::memcmp(streamed.data(), whole.data(), whole.size() * sizeof(float)) == 0;
             }
             std::printf("  %-32s %s\n", "in pieces", same ? "the whole's samples" : "DIFFER");

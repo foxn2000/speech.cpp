@@ -150,3 +150,9 @@ int check_irodori(speech_model * model, const speech_model_info * info, const ch
  * "<made>.embedding.gguf". Returns nonzero on a failure.
  */
 int check_voice_params(const char * model_path, const char * reference, const char * made, const speech_load_params * params);
+
+/**
+ * Drama 3's voice files: `made` of `reference` and its `transcript`, "<made>.cast.gguf" put together of it as speakers 0
+ * and 1, and the voices that cannot be made refused naming their input. Returns nonzero on a failure.
+ */
+int check_drama3_voices(const char * model_path, const char * reference, const char * transcript, const char * made, const speech_load_params * params);

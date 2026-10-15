@@ -36,7 +36,7 @@ namespace {
 const Family families[] = {
     {SPEECH_TASK_SYNTHESIS, qwen3_tts_layout, describe_qwen3_tts, load_qwen3_tts, nullptr},
     {SPEECH_TASK_SYNTHESIS, irodori::model_layout, describe_irodori_tts, load_irodori_tts, make_irodori_tts_voice},
-    {SPEECH_TASK_SYNTHESIS, drama3::model_layout, describe_drama3, load_drama3, nullptr},
+    {SPEECH_TASK_SYNTHESIS, drama3::model_layout, describe_drama3, load_drama3, make_drama3_voice},
     {SPEECH_TASK_RECOGNITION, fastconformer::layout, describe_fastconformer, load_fastconformer, nullptr},
     {SPEECH_TASK_RECOGNITION, qwen3_asr::layout, describe_qwen3_asr, load_qwen3_asr, nullptr},
     {SPEECH_TASK_DETECTION, silero_vad::layout, describe_silero_vad, load_silero_vad, nullptr},
@@ -154,7 +154,7 @@ std::unique_ptr<DetectionStream> Engine::start_detection(const RequestValues &) 
     throw std::logic_error("the family's engine does not detect speech, though the table of families says it does");
 }
 
-void Engine::add_voice(const std::string &, const std::string &) {
+std::string Engine::add_voice(const std::string &, const std::string &) {
     throw std::logic_error("the family's engine takes no voice files, though the table of families says it does");
 }
 
@@ -243,8 +243,9 @@ std::shared_ptr<const FileInfo> read_file_info(const std::string & path) {
             throw std::logic_error(std::string("the options of ") + family.layout.architecture + " are not in the order of the vocabulary");
         }
     }
-    if (info->described.voice_codec.empty() != !family.make_voice) {
-        throw std::logic_error(std::string("the family ") + family.layout.architecture + " names a voice codec without making voice files, or the reverse");
+    if (info->described.voice_codec.empty() != !family.make_voice || (info->described.voice_recordings && !family.make_voice)) {
+        throw std::logic_error(std::string("the family ") + family.layout.architecture +
+                               " names a voice codec or takes recordings without making voice files, or makes them without a codec");
     }
     info->file_bytes = m.file_bytes();
     info->weight_bytes = m.weight_bytes();
@@ -480,8 +481,8 @@ speech_status speech_voice_add(speech_model * model, const char * name, const ch
                                                               " have; give the voice another name",
                            "name");
         }
-        naming("path", [&] { model->engine->add_voice(name, path); });
-        model->add({name, "", "", ""});
+        const std::string description = naming("path", [&] { return model->engine->add_voice(name, path); });
+        model->add({name, "", "", description});
         return SPEECH_OK;
     });
 }

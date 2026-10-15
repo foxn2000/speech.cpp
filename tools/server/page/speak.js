@@ -62,9 +62,9 @@ export class SpeakPanel {
   show(held) {
     this.#held = held;
     $('speak-form').hidden = held === null;
-    $('voice-maker').hidden = !held?.model.voice_files;
+    $('voice-maker').hidden = !held?.model.voice_recordings;
     // A model that speaks only in voices made from recordings has nothing to speak with until one is made.
-    if (held?.model.voice_files && held.model.voices.length === 0) $('voice-maker').open = true;
+    if (held?.model.voice_recordings && held.model.voices.length === 0) $('voice-maker').open = true;
     if (!held) {
       $('speech-result').hidden = true;
       return;

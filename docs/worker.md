@@ -69,7 +69,8 @@ not raise it.
   library resamples it.
 - `pcm`, in both directions, is base64 of 16-bit little-endian mono samples. Audio from the worker is at the model's
   `sample_rate`, each sample `round(clamp(x, −1, 1) × 32767)`. Audio to the worker is read as `x / 32768`.
-- `path` of `add_voice` is a voice file or a WAVE file ([models.md](models.md#voices)).
+- `path` of `add_voice` is a voice file, or a WAVE file for a model whose `voice_recordings` is true (Irodori-TTS);
+  Drama 3 takes a voice file alone ([models.md](models.md#voices)).
 - `info` gives the voices added so far: one sent before an `add_voice` has had its `end` may not list that voice yet.
 - `count_tokens` counts a text's tokens as a synthesis counts them against `max_text_tokens`, so that a caller can split a
   long text before it sends it, also while a synthesis runs.

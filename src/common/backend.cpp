@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -167,4 +168,13 @@ int default_threads() {
 
 ggml_backend_t init_backend(const std::string & name) {
     return start_device(find_device(name.empty() ? "auto" : name), default_threads());
+}
+
+std::string device_kind(ggml_backend_t backend) {
+    switch (ggml_backend_dev_type(ggml_backend_get_device(backend))) {
+        case GGML_BACKEND_DEVICE_TYPE_CPU: return "cpu";
+        case GGML_BACKEND_DEVICE_TYPE_GPU: return "gpu";
+        case GGML_BACKEND_DEVICE_TYPE_IGPU: return "igpu";
+        default: throw std::logic_error(std::string("the device ") + ggml_backend_name(backend) + " is of a kind a voice file cannot name");
+    }
 }

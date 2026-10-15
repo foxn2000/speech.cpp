@@ -291,7 +291,12 @@ def drama3(model, devices, ctx):
     if not dumps:
         return runs + [missing("drama3-codec-check", model.label(), f"dump of {model.name} with a reference under {out}")]
     for device in devices:
-        runs += [runs_on(device, f"drama3-{stage}-check", model, [d], " " + os.path.basename(d)) for stage in ("codec", "text-model", "audio-decoder") for d in dumps]
+        for d in dumps:
+            # The codec check reads the dump's reference recording too, where --references holds it.
+            with open(os.path.join(d, "meta.json"), encoding="utf-8") as f:
+                wav = os.path.join(ctx.references, json.load(f)["reference"]["file"]) if ctx.references else None
+            runs.append(runs_on(device, "drama3-codec-check", model, [d] + ([wav] if wav and os.path.isfile(wav) else []), " " + os.path.basename(d)))
+        runs += [runs_on(device, f"drama3-{stage}-check", model, [d], " " + os.path.basename(d)) for stage in ("text-model", "audio-decoder") for d in dumps]
     return runs
 
 
@@ -399,7 +404,7 @@ def main():
     p.add_argument("--types", default="F32", help="comma-separated weight types of the files to check, or all")
     p.add_argument("--models", nargs="+", help="model files or folders to look in (default: models/ and the model cache)")
     p.add_argument("--reference", default=os.path.join(REPO, "reference"), help="the folder of <family>/out/")
-    p.add_argument("--references", help="the folder of the reference WAVE files Irodori-TTS's dumps name")
+    p.add_argument("--references", help="the folder of the reference WAVE files Irodori-TTS's and Drama 3's dumps name")
     p.add_argument("--decoder-text", help="the text qwen3-decoder-check runs (default: the Qwen3-TTS dumps' texts)")
     p.add_argument("--only", nargs="+", help="run only these checks, by executable name")
     p.add_argument("--logs", help="the folder for each check's output (default: a new temporary folder)")

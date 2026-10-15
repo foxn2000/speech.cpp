@@ -36,6 +36,12 @@ public:
      */
     std::vector<int32_t> rows(const std::string & text, const std::vector<Utterance> & references, const std::vector<Utterance> & history) const;
 
+    /**
+     * Refuses `text`, which is `what` ("the text") of the caller's `input`, where it is empty, holds a token only the
+     * prompt writes or a speaker tag other than <|speaker:0|> to the model's last, with an Error naming `input`.
+     */
+    void check(const std::string & text, const std::string & input, const std::string & what) const;
+
     /** The ids of `text`, its added tokens found first, as the official builder's tokenizer gives them. */
     std::vector<int32_t> tokenize(const std::string & text) const;
 

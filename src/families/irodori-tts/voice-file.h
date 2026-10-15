@@ -33,9 +33,6 @@ struct Loudness {
     std::optional<double> lufs;
 };
 
-/** The kind of device `backend` runs on, as a voice file names it. */
-std::string device_kind(ggml_backend_t backend);
-
 /**
  * Writes a voice file of voice_layout: the latent, row-major [frames, latent_dim], bound to the codec whose hash is
  * `codec_sha256`.

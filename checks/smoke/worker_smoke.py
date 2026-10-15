@@ -6,7 +6,8 @@ threads and the voices of --add-voice), info and count_tokens, also answered whi
 reported and repeats it too; cancels while a request waits, while it runs, of an unknown id, and after an end, whose id
 a later request then reuses; a second request under an id in flight; each error with its code and option (members the
 message does not have, values of the wrong type, out of range or not taken, a missing text, lines that are not JSON
-objects or have no id or type, the other task's messages); chunks to a synthesis model; add_voice; for
+objects or have no id or type, the other task's messages); chunks to a synthesis model; add_voice, and a recording
+refused by a model that takes voice files alone; for
 Irodori-TTS a fixed length, the progress of a long sampler, a paragraph past what one request speaks spoken in one
 synthesize, whose reported seed repeats it, and a run with no place to cut refused, naming it, for Drama 3 max_seconds,
 the sampling options' ranges and a paragraph of several of its chunks spoken in one synthesize, and for Qwen3-TTS a
@@ -21,8 +22,10 @@ usage: python3 checks/smoke/worker_smoke.py <out.wav> <speech> <model.gguf> [wor
 
 import base64
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import time
 import wave
 
@@ -275,6 +278,15 @@ if info["voice_files"]:
     speak("v-speak", text="あ。")
     expect_error({"type": "add_voice", "id": "v2", "name": "added", "path": path}, "invalid_argument", "name")
     expect_error({"type": "add_voice", "id": "v3", "name": "other", "path": "/no/such/voice.gguf"}, "io", "path")
+    if not info["voice_recordings"]:
+        with tempfile.TemporaryDirectory() as folder:
+            recording = os.path.join(folder, "recording.wav")
+            with wave.open(recording, "wb") as f:
+                f.setnchannels(1)
+                f.setsampwidth(2)
+                f.setframerate(rate)
+                f.writeframes(bytes(2 * rate))
+            expect_error({"type": "add_voice", "id": "v4", "name": "other", "path": recording}, "invalid_argument", "path")
     print("add_voice: the voice was added, info lists it, and a synthesis speaks with it")
 else:
     expect_error({"type": "add_voice", "id": "v", "name": "x", "path": "x.wav"}, "unsupported", None)

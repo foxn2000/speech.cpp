@@ -171,15 +171,17 @@ def check_tasks():
 
 
 def check_voice(wav):
-    """A voice made from a recording, added to a synthesis model that takes voice files and refused by another."""
+    """A voice made from a recording, added to a synthesis model that takes recordings and refused by another."""
     boundary = uuid.uuid4().hex
     form = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nsmoke\r\n--{boundary}\r\nContent-Disposition: form-data; "
             f"name=\"file\"; filename=\"x.wav\"\r\n\r\n").encode() + wav + f"\r\n--{boundary}--\r\n".encode()
     got = call("POST", "/speech/voices", form, {"Content-Type": f"multipart/form-data; boundary={boundary}"})
-    if info["synthesis"]["voice_files"]:
+    if info["synthesis"]["voice_recordings"]:
         assert got[0] == 200 and "smoke" in [v["name"] for v in json.loads(got[2])["held"]["model"]["voices"]], got[2][:300]
         info["synthesis"] = json.loads(got[2])["held"]["model"]
         print(f"a voice made from a recording added to {info['synthesis']['name']}")
+    elif info["synthesis"]["voice_files"]:
+        expect_error(got, 400, "invalid_value", "path", f"a recording for {info['synthesis']['name']}, which takes voice files alone")
     else:
         expect_error(got, 400, "unsupported_parameter", None, f"a voice for {info['synthesis']['name']}, which takes no voice files")
 

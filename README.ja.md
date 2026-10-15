@@ -111,7 +111,7 @@ irm https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.ps1 | ie
 | `speech tts` | テキストを読み上げ、WAVE ファイルか標準出力に書き出します |
 | `speech asr` | WAVE ファイルの音声、または話している最中のマイクの音声を文字に起こします |
 | `speech vad` | WAVE ファイルの中で人が話している区間を書き出します |
-| `speech voice` | 参照録音から Irodori-TTS の声のファイルを作ります |
+| `speech voice` | 参照録音から Irodori-TTS か Drama 3 の声のファイルを作ります |
 | `speech info` | モデルファイルに書かれているモデルの情報を表示します |
 | `speech devices` | モデルを動かせるデバイスを一覧にします |
 | `speech models`, `pull`, `rm` | モデルの一覧表示、取得、削除をします |

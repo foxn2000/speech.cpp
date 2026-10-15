@@ -3,14 +3,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
 #include <stdexcept>
 
 #include "error.h"
 #include "layout.h"
 #include "text-normalizer.h"
+#include "wav.h"
 
 namespace irodori {
 
@@ -22,14 +20,6 @@ struct Timer {
     std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     ~Timer() { total += std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(); }
 };
-
-bool starts_with_riff(const std::string & path) {
-    std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
-    if (!f) throw Error(Fault::Io, "cannot open " + path + "; check the path and that the file can be read");
-    char magic[4] = {};
-    f.read(magic, 4);
-    return std::memcmp(magic, "RIFF", 4) == 0;
-}
 
 }  // namespace
 

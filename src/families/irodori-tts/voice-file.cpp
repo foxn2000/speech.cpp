@@ -3,6 +3,7 @@
 #include <cstring>
 #include <memory>
 
+#include "backend.h"
 #include "codec.h"
 #include "error.h"
 #include "gguf.h"
@@ -10,15 +11,6 @@
 #include "reference.h"
 
 namespace irodori {
-
-std::string device_kind(ggml_backend_t backend) {
-    switch (ggml_backend_dev_type(ggml_backend_get_device(backend))) {
-        case GGML_BACKEND_DEVICE_TYPE_CPU: return "cpu";
-        case GGML_BACKEND_DEVICE_TYPE_GPU: return "gpu";
-        case GGML_BACKEND_DEVICE_TYPE_IGPU: return "igpu";
-        default: throw std::logic_error(std::string("the device ") + ggml_backend_name(backend) + " is of a kind a voice file cannot name");
-    }
-}
 
 void write_voice_file(const std::string & path, const std::vector<float> & latent, int latent_dim, const std::string & codec_sha256,
                       const VoiceOrigin & origin) {

@@ -94,38 +94,39 @@ void Prompt::append_codes(std::vector<int32_t> & rows, const Utterance & u) cons
     }
 }
 
+void Prompt::check(const std::string & t, const std::string & input, const std::string & what) const {
+    if (!has_content(t)) throw Error(Fault::InvalidArgument, what + " is empty; give it words to speak", input);
+    for (const std::string & token : reserved_) {
+        if (t.find(token) != std::string::npos) {
+            throw Error(Fault::InvalidArgument, what + " holds " + token + ", which only the prompt writes; take it out", input);
+        }
+    }
+    for (size_t at = t.find("<|speaker"); at != std::string::npos; at = t.find("<|speaker", at + 1)) {
+        std::string digits;
+        const bool canonical = speaker_tag_at(t, at, &digits) && digits.size() <= 2 && (digits.size() == 1 || digits[0] != '0') &&
+                               std::stoi(digits) < speakers_;
+        if (!canonical) {
+            throw Error(Fault::InvalidArgument,
+                        what + " holds a speaker tag other than <|speaker:0|> to <|speaker:" + std::to_string(speakers_ - 1) +
+                            "|>; write each speaker as one of them",
+                        input);
+        }
+    }
+}
+
 std::vector<int32_t> Prompt::rows(const std::string & text, const std::vector<Utterance> & references, const std::vector<Utterance> & history) const {
-    const auto check_text = [&](const std::string & t, const std::string & input, const std::string & what) {
-        if (!has_content(t)) throw Error(Fault::InvalidArgument, what + " is empty; give it words to speak", input);
-        for (const std::string & token : reserved_) {
-            if (t.find(token) != std::string::npos) {
-                throw Error(Fault::InvalidArgument, what + " holds " + token + ", which only the prompt writes; take it out", input);
-            }
-        }
-        for (size_t at = t.find("<|speaker"); at != std::string::npos; at = t.find("<|speaker", at + 1)) {
-            std::string digits;
-            const bool canonical = speaker_tag_at(t, at, &digits) && digits.size() <= 2 && (digits.size() == 1 || digits[0] != '0') &&
-                                   std::stoi(digits) < speakers_;
-            if (!canonical) {
-                throw Error(Fault::InvalidArgument,
-                            what + " holds a speaker tag other than <|speaker:0|> to <|speaker:" + std::to_string(speakers_ - 1) +
-                                "|>; write each speaker as one of them",
-                            input);
-            }
-        }
-    };
     const auto check_codes = [&](const Utterance & u, const std::string & what) {
         const bool fits = u.frames >= 1 && (int64_t) u.codes.size() == u.frames * codebooks_ &&
                           std::all_of(u.codes.begin(), u.codes.end(), [&](int32_t c) { return c >= 0 && c < codes_; });
         if (!fits) throw Error(Fault::InvalidArgument, what + " holds codes that are not frames of " + std::to_string(codebooks_) + " codes of the codec", "voice");
     };
-    check_text(text, "text", "the text");
+    check(text, "text", "the text");
     for (size_t i = 0; i < references.size(); i++) {
-        check_text(references[i].text, "voice", "the transcript of reference " + std::to_string(i + 1));
+        check(references[i].text, "voice", "the transcript of reference " + std::to_string(i + 1));
         check_codes(references[i], "reference " + std::to_string(i + 1));
     }
     for (size_t i = 0; i < history.size(); i++) {
-        check_text(history[i].text, "text", "chunk " + std::to_string(i + 1) + " spoken before");
+        check(history[i].text, "text", "chunk " + std::to_string(i + 1) + " spoken before");
         check_codes(history[i], "chunk " + std::to_string(i + 1) + " spoken before");
     }
 

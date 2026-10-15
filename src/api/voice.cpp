@@ -41,7 +41,9 @@ speech_status speech_voice_make(const char * model_path, const char * reference_
                                 const speech_load_params * params) {
     return guarded([&] {
         require(reference_path, "reference_path", "reference_path");
-        make_voice(model_path, {{reference_path}}, voice_path, params);
+        VoiceRecipe recipe;
+        recipe.parts.push_back({false, reference_path});
+        make_voice(model_path, recipe, voice_path, params);
         return SPEECH_OK;
     });
 }
@@ -62,7 +64,42 @@ speech_status speech_voice_params_add_reference(speech_voice_params * params, co
     return guarded([&] {
         require(params, "params");
         require(path, "path", "references");
-        params->recipe.references.push_back(path);
+        params->recipe.parts.push_back({false, path});
+        return SPEECH_OK;
+    });
+}
+
+speech_status speech_voice_params_set_transcript(speech_voice_params * params, const char * text) {
+    return guarded([&] {
+        require(params, "params");
+        require(text, "text", "transcript");
+        if (params->recipe.parts.empty() || params->recipe.parts.back().voice_file) {
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "a transcript belongs to the reference added last, and none was; add the reference first",
+                           "transcript");
+        }
+        params->recipe.parts.back().transcript = text;
+        return SPEECH_OK;
+    });
+}
+
+speech_status speech_voice_params_set_speaker(speech_voice_params * params, int speaker) {
+    return guarded([&] {
+        require(params, "params");
+        if (params->recipe.parts.empty()) {
+            throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT, "a speaker is given to the reference or voice added last, and none was; add it first",
+                           "speaker");
+        }
+        if (speaker < 0) throw ApiError(SPEECH_ERROR_OUT_OF_RANGE, "the speaker is " + std::to_string(speaker) + "; speakers are numbered from 0", "speaker");
+        params->recipe.parts.back().speaker = speaker;
+        return SPEECH_OK;
+    });
+}
+
+speech_status speech_voice_params_add_voice(speech_voice_params * params, const char * path) {
+    return guarded([&] {
+        require(params, "params");
+        require(path, "path", "references");
+        params->recipe.parts.push_back({true, path});
         return SPEECH_OK;
     });
 }
@@ -107,12 +144,12 @@ speech_status speech_voice_make_from(const char * model_path, const speech_voice
     return guarded([&] {
         require(voice, "voice");
         const VoiceRecipe & recipe = voice->recipe;
-        if (!recipe.embedding.empty() && (!recipe.references.empty() || !recipe.normalize || recipe.lufs)) {
+        if (!recipe.embedding.empty() && (!recipe.parts.empty() || !recipe.normalize || recipe.lufs)) {
             throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT,
                            "a voice of an embedding has no references and no loudness; make it of the embedding alone or of references alone",
                            "embedding");
         }
-        if (recipe.references.empty() && recipe.embedding.empty()) {
+        if (recipe.parts.empty() && recipe.embedding.empty()) {
             throw ApiError(SPEECH_ERROR_INVALID_ARGUMENT,
                            "the voice has no reference and no embedding; add one with speech_voice_params_add_reference() or "
                            "speech_voice_params_set_embedding()",

@@ -148,6 +148,7 @@ add_library(drama3 STATIC
     src/families/drama3/prompt.cpp
     src/families/drama3/chunking.cpp
     src/families/drama3/synthesizer.cpp
+    src/families/drama3/voice-file.cpp
 )
 target_include_directories(drama3 PUBLIC src/families)
 target_link_libraries(drama3 PUBLIC speechcommon)
@@ -346,7 +347,7 @@ target_link_libraries(irodori-synthesis-check PRIVATE irodoritts)
 add_executable(quantize-check checks/common/quantize-check.cpp)
 target_link_libraries(quantize-check PRIVATE speechcommon)
 
-add_executable(speech-api-check checks/api/speech-api-check.c checks/api/speech-api-irodori.c checks/api/speech-api-recognition.c
+add_executable(speech-api-check checks/api/speech-api-check.c checks/api/speech-api-irodori.c checks/api/speech-api-drama3.c checks/api/speech-api-recognition.c
                checks/api/speech-api-detection.c checks/api/speech-api-detection-stream.c checks/api/speech-api-common.c
                checks/api/speech-api-platform.c)
 target_link_libraries(speech-api-check PRIVATE speech)

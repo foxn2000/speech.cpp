@@ -153,7 +153,7 @@ export class OptionForm {
     // The description says what the name does not: the voice's character, and its gender where the model gives one.
     const describe = () => {
       const voice = voices.get(select.value);
-      const none = option.choices.length === 0 && info.voice_files ? 'Make one from a recording below.' : '';
+      const none = option.choices.length === 0 && info.voice_recordings ? 'Make one from a recording below.' : '';
       help.textContent = voice ? voice.description || voice.gender : none;
     };
     select.addEventListener('change', (event) => {

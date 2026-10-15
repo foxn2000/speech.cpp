@@ -16,8 +16,12 @@
  * With a recognition model (transcribe), speech-api-recognition.c, which takes F32 or F16 weights only, and with a
  * detection model (detect), speech-api-detection.c and speech-api-detection-stream.c.
  *
+ * With --make-drama3-voice, Drama 3's voice files of a recording and its transcript, of them put together as two
+ * speakers, and the ones refused (speech-api-drama3.c), then refuses the recording added alone and speaks both voices.
+ *
  * usage: speech-api-check <model.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]...
  *                         [--make-voice <reference.wav> <voice.gguf>]
+ *                         [--make-drama3-voice <reference.wav> <transcript> <voice.gguf>]
  *        speech-api-check transcribe <model.gguf> <dump folder>... [--device NAME]
  *        speech-api-check detect <model.gguf> <dump folder>... [--device NAME]
  */
@@ -100,10 +104,11 @@ static void on_log(speech_log_level level, const char * text, void * user_data) 
 }
 
 /** Adds the voices of the command line after the model's own, and checks the voices a model refuses. */
-static int check_voices(speech_model * model, const char * model_path, char ** names, char ** paths, size_t n_voices, int voice_files) {
+static int check_voices(speech_model * model, const char * model_path, char ** names, char ** paths, size_t n_voices, const char * recording) {
     speech_model_info * info = NULL;
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
     const size_t own = speech_model_info_voice_count(info);
+    const int voice_files = speech_model_info_voice_files(info), recordings = speech_model_info_voice_recordings(info);
     speech_model_info_free(info);
     for (size_t i = 0; i < n_voices; i++) {
         const double start = now_seconds();
@@ -123,6 +128,10 @@ static int check_voices(speech_model * model, const char * model_path, char ** n
     // The voice none speaks without a reference in a file that holds the null speaker, and its name stays its own in
     // one that does not.
     ok &= expect(speech_voice_add(model, "none", paths[0]), SPEECH_ERROR_INVALID_ARGUMENT, "name", "a voice added under the name none");
+    if (recording && !recordings) {
+        ok &= expect(speech_voice_add(model, "recording", recording), SPEECH_ERROR_INVALID_ARGUMENT, "path",
+                     "a recording added to a model that takes voice files alone");
+    }
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
     ok &= speech_model_info_voice_count(info) == own + n_voices &&
           !strcmp(speech_model_info_voice_name(info, own + n_voices - 1), names[n_voices - 1]) &&
@@ -231,6 +240,27 @@ static int check_drama3_sampling(speech_model * model, const char * voice) {
              a.n == 0 && speech_request_set_float(r, SPEECH_OPT_TEMPERATURE, 1) == SPEECH_OK &&
              expect(speak(r, &a, NULL, NULL), SPEECH_OK, NULL, "the same request run again with temperature 1") && a.n > 0;
     if (!ok) fprintf(stderr, "FAIL: Drama 3's temperature is not followed\n");
+    free(a.samples);
+    return ok ? 0 : 1;
+}
+
+/**
+ * Drama 3's voices made by check_drama3_voices(): the information names their speakers, and a scene of the two speakers
+ * of the cast speaks. Nothing to check where no voice was made.
+ */
+static int check_drama3_cast(speech_model * model, const speech_model_info * info, int made) {
+    if (!made) return 0;
+    const size_t n = speech_model_info_voice_count(info);
+    int ok = n >= 2 && !strcmp(speech_model_info_voice_name(info, n - 2), "made") && !strcmp(speech_model_info_voice_name(info, n - 1), "cast");
+    if (ok) {
+        const char * one = speech_model_info_voice_description(info, n - 2), * two = speech_model_info_voice_description(info, n - 1);
+        ok = strchr(one, '0') && !strchr(one, '1') && strchr(two, '0') && strchr(two, '1');
+    }
+    if (!ok) fprintf(stderr, "FAIL: the information does not name the speakers of Drama 3's voices\n");
+    Audio a = {NULL, 0, 0};
+    speech_request * r = new_request(model, "<|speaker:0|> こんにちは。<|speaker:1|> こんばんは。", "cast", 5);
+    ok &= expect(speak(r, &a, NULL, NULL), SPEECH_OK, NULL, "a scene of the cast's two speakers") && a.n > 0;
+    if (ok) printf("the cast's voices are described by their speakers, and a scene of both spoke %zu samples\n", a.n);
     free(a.samples);
     return ok ? 0 : 1;
 }
@@ -365,18 +395,19 @@ static int check_threads(speech_model * model, const char * voice) {
 
 /** The checks of a loaded synthesis model, which main frees whatever they find. */
 static int check_model(speech_model * model, const char * model_path, const char * out_wav, char ** names, char ** paths, size_t n_voices,
-                       int made) {
+                       int made, const char * recording) {
     if (check_info_matches(model_path, model) != 0) return 1;
     speech_model_info * info = NULL;
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
     const int irodori = !strcmp(speech_model_info_architecture(info), "irodori-tts");
     const int drama3 = !strcmp(speech_model_info_architecture(info), "drama3");
     if (speech_model_info_task(info) != SPEECH_TASK_SYNTHESIS || speech_model_info_max_text_tokens(info) == 0 ||
-        (irodori && (!speech_model_info_voice_codec(info) || n_voices == 0)) || (!irodori && speech_model_info_voice_count(info) == 0)) {
+        (irodori && (!speech_model_info_voice_codec(info) || n_voices == 0)) || (!irodori && speech_model_info_voice_count(info) == 0) ||
+        speech_model_info_voice_recordings(info) != irodori) {
         fprintf(stderr, "FAIL: a synthesis model is not described as speech.h declares, or Irodori-TTS was given no voice\n");
         return 1;
     }
-    if (check_voices(model, model_path, names, paths, n_voices, speech_model_info_voice_files(info)) != 0 || check_option_refusals(model) != 0) return 1;
+    if (check_voices(model, model_path, names, paths, n_voices, recording) != 0 || check_option_refusals(model) != 0) return 1;
     speech_model_info_free(info);
     if (speech_model_get_info(model, &info) != SPEECH_OK) return fail("speech_model_get_info");
     const int rate = speech_model_info_sample_rate(info);
@@ -407,7 +438,7 @@ static int check_model(speech_model * model, const char * model_path, const char
         return 1;
     }
     printf("the drawn seed %lld gives the same %zu samples again\n", (long long) seed, again.n);
-    if (made) {
+    if (made && irodori) {
         Audio embedded = {NULL, 0, 0};
         if (speak(new_request(model, SENTENCE, "embedded", 7), &embedded, NULL, NULL) != SPEECH_OK || embedded.n == 0) {
             return fail("a request in the voice of an embedding");
@@ -446,7 +477,7 @@ static int check_model(speech_model * model, const char * model_path, const char
 
     if (check_defaults(model, info, voice) != 0) return 1;
     if (irodori ? check_irodori(model, info, voice) != 0
-        : drama3 ? check_length_limits(model, info, voice) != 0 || check_drama3_sampling(model, voice) != 0
+        : drama3 ? check_length_limits(model, info, voice) != 0 || check_drama3_sampling(model, voice) != 0 || check_drama3_cast(model, info, made)
                  : check_length_limits(model, info, voice) != 0 || check_qwen3_tts_sampling(model, voice) != 0 ||
                        check_qwen3_tts_instructions(model, info, voice) != 0) {
         return 1;
@@ -464,7 +495,7 @@ int main(int argc, char ** argv) {
     if (argc < 3) {
         fprintf(stderr,
                 "usage: %s <model.gguf> <out.wav> [--device NAME] [--voice NAME=FILE]... "
-                "[--make-voice <reference.wav> <voice.gguf>]\n"
+                "[--make-voice <reference.wav> <voice.gguf>] [--make-drama3-voice <reference.wav> <transcript> <voice.gguf>]\n"
                 "       %s transcribe <model.gguf> <dump folder>... [--device NAME]\n"
                 "       %s detect <model.gguf> <dump folder>... [--device NAME]\n",
                 argv[0], argv[0], argv[0]);
@@ -481,7 +512,7 @@ int main(int argc, char ** argv) {
     if (speech_load_params_new(&params) != SPEECH_OK) return fail("speech_load_params_new");
     char * names[MAX_VOICES], * paths[MAX_VOICES];
     size_t n_voices = 0;
-    const char * reference = NULL, * made = NULL;
+    const char * reference = NULL, * made = NULL, * transcript = NULL;
     for (int i = 3; i < argc; i++) {
         if (!strcmp(argv[i], "--device") && i + 1 < argc) {
             if (speech_load_params_set_device(params, argv[++i]) != SPEECH_OK) return fail("speech_load_params_set_device");
@@ -497,12 +528,24 @@ int main(int argc, char ** argv) {
         } else if (!strcmp(argv[i], "--make-voice") && i + 2 < argc) {
             reference = argv[++i];
             made = argv[++i];
+        } else if (!strcmp(argv[i], "--make-drama3-voice") && i + 3 < argc) {
+            reference = argv[++i];
+            transcript = argv[++i];
+            made = argv[++i];
         } else {
             fprintf(stderr, "unknown or incomplete option %s\n", argv[i]);
             return 2;
         }
     }
-    if (made) {
+    if (made && transcript) {
+        if (check_drama3_voices(model_path, reference, transcript, made, params) != 0) return 1;
+        static char cast[4096];
+        snprintf(cast, sizeof cast, "%s.cast.gguf", made);
+        names[n_voices] = (char *) "made";
+        paths[n_voices++] = (char *) made;
+        names[n_voices] = (char *) "cast";
+        paths[n_voices++] = cast;
+    } else if (made) {
         const double start = now_seconds();
         if (speech_voice_make(model_path, reference, made, params) != SPEECH_OK) return fail("speech_voice_make");
         printf("made the voice file %s in %.3f s\n", made, now_seconds() - start);
@@ -520,7 +563,7 @@ int main(int argc, char ** argv) {
     if (speech_model_load(model_path, params, &model) != SPEECH_OK) return fail("speech_model_load");
     speech_load_params_free(params);
     printf("loaded without a warm-up in %.2f s\n", now_seconds() - start);
-    const int status = check_model(model, model_path, argv[2], names, paths, n_voices, made != NULL);
+    const int status = check_model(model, model_path, argv[2], names, paths, n_voices, made != NULL, reference);
     speech_model_free(model);
     if (status == 0) {
         printf("log messages: %d debug, %d info, %d warnings, %d errors\n", log_counts[0], log_counts[1], log_counts[2], log_counts[3]);

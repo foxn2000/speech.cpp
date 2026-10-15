@@ -91,14 +91,15 @@ A synthesis request needs a `voice`.
 - **Irodori-TTS** speaks in the voice of a reference recording that you add, or with the voice `none`, with which the
   model chooses a voice itself ([models/irodori-tts.md](models/irodori-tts.md#voices)). A voice is added from a WAVE
   file, which is encoded each time it is added, or from a voice file that `speech voice` made once.
-- **Drama 3** speaks with the voice `none`, with which the model chooses a voice for each speaker the text names
-  ([models/drama3.md](models/drama3.md#what-it-does)).
+- **Drama 3** speaks with the voice `none`, with which the model chooses a voice for each speaker the text names, or
+  in the voices of a voice file that `speech voice` made of recordings and their transcripts, each given to a speaker
+  ([models/drama3.md](models/drama3.md#voices)). It takes a voice file alone, not a WAVE file.
 
 | Entry point | How to add a voice |
 |---|---|
 | `speech tts` | `--add-voice NAME=FILE`, repeatable |
 | `speech worker` | `--add-voice NAME=FILE`, or the request `add_voice` |
-| `speech serve` | `--add-voice NAME=FILE`, or a recording on the page |
+| `speech serve` | `--add-voice NAME=FILE`, or a recording on the page (Irodori-TTS) |
 | C API | `speech_voice_add()` |
 
 A voice's name is case-sensitive, and may be neither a voice of the model nor `none`.

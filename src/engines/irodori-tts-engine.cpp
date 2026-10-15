@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "engine.h"
+#include "error.h"
 #include "irodori-tts/synthesizer.h"
 #include "irodori-tts/text-normalizer.h"
 #include "irodori-tts/voice-file.h"
@@ -55,8 +56,9 @@ public:
         return SPEECH_STOP_COMPLETE;
     }
 
-    void add_voice(const std::string & name, const std::string & path) override {
+    std::string add_voice(const std::string & name, const std::string & path) override {
         voices_.emplace(name, synth_.load_voice(path));
+        return "";
     }
 
     void warm_up() override {
@@ -157,6 +159,7 @@ FamilyInfo describe_irodori_tts(const std::shared_ptr<const ModelFile> & file) {
                                   ", which lacks the null speaker that the voice none speaks with without a reference; " + m.remedy()});
     }
     info.voice_codec = m.str("irodori-tts.codec.sha256");
+    info.voice_recordings = true;
     info.max_text_tokens = m.u32("irodori-tts.text.max_tokens");
     info.options = {
         {SPEECH_OPT_VOICE, true, true},
@@ -224,5 +227,16 @@ void make_irodori_tts_voice(const std::string & model_path, const VoiceRecipe & 
         irodori::make_embedding_voice_file(model_path, recipe.embedding, (int) recipe.embedding_tokens, voice_path);
         return;
     }
-    irodori::make_voice_file(model_path, recipe.references, {recipe.normalize, recipe.lufs}, voice_path, backend);
+    std::vector<std::string> references;
+    for (const VoicePart & part : recipe.parts) {
+        // Irodori-TTS hears a voice in its recordings alone, and has one speaker.
+        if (part.voice_file || part.transcript || part.speaker) {
+            throw Error(Fault::InvalidArgument,
+                        std::string("Irodori-TTS makes a voice of WAVE files alone, without ") +
+                            (part.voice_file ? "voice files" : part.transcript ? "transcripts" : "speakers") + "; give it the recordings",
+                        "references");
+        }
+        references.push_back(part.path);
+    }
+    irodori::make_voice_file(model_path, references, {recipe.normalize, recipe.lufs}, voice_path, backend);
 }

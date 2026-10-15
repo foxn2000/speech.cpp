@@ -38,3 +38,6 @@ int default_threads();
  * threads: what the checks run on.
  */
 ggml_backend_t init_backend(const std::string & name);
+
+/** The kind of device `backend` runs on, as a voice file names it: "cpu", "gpu" or "igpu". */
+std::string device_kind(ggml_backend_t backend);

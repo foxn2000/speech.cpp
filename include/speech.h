@@ -618,7 +618,7 @@ SPEECH_API const char * speech_model_info_voice_description(const speech_model_i
 
 /**
  * Whether the model takes voices made from reference recordings (1), through speech_voice_add() and
- * speech_voice_make().
+ * speech_voice_make_from().
  */
 SPEECH_API int speech_model_info_voice_files(const speech_model_info * info);
 
@@ -627,6 +627,13 @@ SPEECH_API int speech_model_info_voice_files(const speech_model_info * info);
  * hexadecimal, or NULL for a model that takes no voice files.
  */
 SPEECH_API const char * speech_model_info_voice_codec(const speech_model_info * info);
+
+/**
+ * Whether speech_voice_add() takes a reference recording in a WAVE file as well as a voice file (1). A model that needs
+ * the words of each recording (Drama 3) takes voice files alone, made with speech_voice_make_from(), and is 0, as is a
+ * model that takes no voice files. Added in 3.3.
+ */
+SPEECH_API int speech_model_info_voice_recordings(const speech_model_info * info);
 
 /** The most tokens of text a synthesis request may have, in the model's own tokens; 0 for a recognition or detection model. */
 SPEECH_API size_t speech_model_info_max_text_tokens(const speech_model_info * info);
@@ -802,7 +809,9 @@ SPEECH_API speech_status speech_model_get_info(const speech_model * model, speec
  * mixed to mono, resampled to the model's rate and encoded with the model's codec on the model's device. The name is
  * compared with case and must not name a voice the model has. A request that is running finishes first; any thread
  * may call it. A model that takes no voice files is SPEECH_ERROR_UNSUPPORTED, and a voice file made with another
- * codec is SPEECH_ERROR_INVALID_ARGUMENT.
+ * codec is SPEECH_ERROR_INVALID_ARGUMENT. A model whose speech_model_info_voice_recordings() is 0 (Drama 3, which needs
+ * a recording's words) takes a voice file alone, and a recording is SPEECH_ERROR_INVALID_ARGUMENT naming "path"; its
+ * information describes the voice by its speakers.
  */
 SPEECH_API speech_status speech_voice_add(speech_model * model, const char * name, const char * path);
 
@@ -817,9 +826,10 @@ SPEECH_API speech_status speech_voice_make(const char * model_path, const char *
                                            const char * voice_path, const speech_load_params * params);
 
 /*
- * Voice parameters: what speech_voice_make_from() makes a voice file of, several reference recordings and the loudness
- * each is brought to, as the official runtime's ref_wavs and ref_normalize_db, or a speaker-inversion embedding, as its
- * ref_embed. Added in 3.1.
+ * Voice parameters: what speech_voice_make_from() makes a voice file of: several reference recordings and the loudness
+ * each is brought to, as Irodori-TTS's runtime's ref_wavs and ref_normalize_db, or a speaker-inversion embedding, as
+ * its ref_embed; or, for Drama 3, recordings with their transcripts and voice files, each given to one of the speakers
+ * a text names. Added in 3.1.
  */
 typedef struct speech_voice_params speech_voice_params;
 
@@ -857,6 +867,26 @@ SPEECH_API speech_status speech_voice_params_keep_loudness(speech_voice_params *
  */
 SPEECH_API speech_status speech_voice_params_set_embedding(speech_voice_params * params, const float * values, size_t tokens,
                                                            size_t dim);
+
+/**
+ * Gives the reference recording added last its transcript, the words it speaks in UTF-8, which a model that writes a
+ * reference's words into its prompt needs for every recording (Drama 3) and any other refuses. Added in 3.3.
+ */
+SPEECH_API speech_status speech_voice_params_set_transcript(speech_voice_params * params, const char * text);
+
+/**
+ * Gives what was added last, a reference recording or a voice file of one speaker, the speaker `speaker`, from 0, under
+ * which a text's speaker tag finds it (Drama 3: `<|speaker:N|>`). A recording is speaker 0's and a voice file keeps its
+ * speakers unless one is given; a model of one speaker refuses it. Added in 3.3.
+ */
+SPEECH_API speech_status speech_voice_params_set_speaker(speech_voice_params * params, int speaker);
+
+/**
+ * Adds the references of the voice file at `path`, made for a model of the same family and codec, as they are, without
+ * encoding them again, so that a voice of several speakers is put together from voices made before (Drama 3); a model
+ * that joins its references into one voice refuses it. Added in 3.3.
+ */
+SPEECH_API speech_status speech_voice_params_add_voice(speech_voice_params * params, const char * path);
 
 /**
  * Makes a voice file at `voice_path` of `voice`, its references, at least one, or its embedding, for the model file at
