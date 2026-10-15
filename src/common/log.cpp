@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <memory>
+#include <cstdlib>
 #include <mutex>
 
 #include "ggml.h"
@@ -13,7 +14,7 @@ std::mutex sink_mutex;
 std::shared_ptr<const LogSink> sink;
 
 void to_stderr(LogLevel level, const char * text) {
-    if (level == LogLevel::Warn || level == LogLevel::Error) std::fputs(text, stderr);
+    if (level == LogLevel::Warn || level == LogLevel::Error || std::getenv("SPEECH_LOG_ALL")) std::fputs(text, stderr);
 }
 
 /** The level of ggml's last message on this thread, which a continuation (GGML_LOG_LEVEL_CONT) keeps. */

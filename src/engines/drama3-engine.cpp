@@ -9,6 +9,7 @@
 #include "drama3/synthesizer.h"
 #include "drama3/voice-file.h"
 #include "backend.h"
+#include "ggml-cpu.h"
 #include "engine.h"
 #include "error.h"
 #include "json.h"
@@ -145,7 +146,13 @@ FamilyInfo describe_drama3(const std::shared_ptr<const ModelFile> & file) {
 
 std::unique_ptr<Engine> load_drama3(const std::string & path, ggml_backend_t backend, int threads) {
     if (std::getenv("DRAMA3_CPU_EXPERTS")) {
-        drama3::g_cpu = start_device(find_device("cpu"), threads > 0 ? threads : default_threads());
+        const int n = threads > 0 ? threads : default_threads();
+        drama3::g_cpu = start_device(find_device("cpu"), n);
+        if (!std::getenv("DRAMA3_NO_POOL")) {
+            ggml_threadpool_params params = ggml_threadpool_params_default(n);
+            ggml_backend_cpu_set_threadpool(drama3::g_cpu, ggml_threadpool_new(&params));
+        }
+        std::fprintf(stderr, "experts on the CPU with %d threads%s\n", n, std::getenv("DRAMA3_NO_POOL") ? "" : " in a pool");
         drama3::g_experts = new ModelFile(path, drama3::g_cpu, drama3::model_layout, [](const std::string & name) { return name.find("_exps") != std::string::npos; });
     }
     return std::make_unique<Drama3Engine>(path, backend);
