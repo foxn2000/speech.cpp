@@ -281,7 +281,12 @@ std::vector<float> TextModel::run(const std::vector<float> & input, int64_t n, T
         if (g_cpu) {
             if (!sched_) {
                 ggml_backend_t backends[2] = {backend_, g_cpu};
-                sched_ = ggml_backend_sched_new(backends, nullptr, 2, 65536, false, std::getenv("DRAMA3_NO_OFFLOAD") == nullptr);
+                // The CPU's tensors in the GPU's pinned host memory, which its transfers reach without staging.
+                ggml_backend_buffer_type_t pinned = ggml_backend_dev_host_buffer_type(ggml_backend_get_device(backend_));
+                ggml_backend_buffer_type_t bufts[2] = {ggml_backend_get_default_buffer_type(backend_),
+                                                       pinned && std::getenv("DRAMA3_PINNED") ? pinned : ggml_backend_get_default_buffer_type(g_cpu)};
+                if (std::getenv("DRAMA3_TIMING")) std::fprintf(stderr, "scheduler: CPU buffers %s\n", ggml_backend_buft_name(bufts[1]));
+                sched_ = ggml_backend_sched_new(backends, bufts, 2, 65536, false, std::getenv("DRAMA3_NO_OFFLOAD") == nullptr);
             }
             g.compute_scheduled(sched_);
             if (rows == 1 && std::getenv("DRAMA3_TIMING")) {
