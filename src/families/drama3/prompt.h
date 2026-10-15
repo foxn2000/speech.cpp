@@ -62,9 +62,9 @@ private:
 
 /**
  * Whether `text` holds anything but Unicode white space (the White_Space property, which leaves out U+001C to U+001F
- * where Python's str.strip() takes them).
+ * where Python's str.strip() takes them); text that is not UTF-8 is refused naming `input`.
  */
-bool has_content(const std::string & text);
+bool has_content(const std::string & text, const std::string & input);
 
 /** `text` with <|speaker:0|> and a space before it, unless a speaker tag leads it after white space. */
 std::string with_speaker_tag(const std::string & text);

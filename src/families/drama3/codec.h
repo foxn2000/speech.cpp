@@ -36,6 +36,9 @@ public:
     /** The codes of a frame: the semantic code, then the residual ones. */
     int codebooks() const { return 1 + residual_codebooks_; }
 
+    /** The frames encode() gives `samples` samples, the last of them padded to a whole frame. */
+    int64_t frames(size_t samples) const { return (int64_t) ((samples + (size_t) hop_ - 1) / (size_t) hop_); }
+
     /**
      * The codes of `audio`, mono at sample_rate(), as [codebooks, frames] with the frame fastest, the audio padded with
      * silence on the right to whole frames as the official encoder pads it. `stages`, when given, receives the encoder

@@ -274,9 +274,9 @@ Codec::~Codec() {
 
 std::vector<int32_t> Codec::encode(const std::vector<float> & audio, CodecStages * stages) {
     if (audio.empty()) throw Error(Fault::OutOfRange, "the codec has no audio to encode");
+    const int64_t frames = this->frames(audio.size()), n = frames * hop_;
     std::vector<float> padded = audio;
-    padded.resize((audio.size() + hop_ - 1) / hop_ * hop_, 0.0f);
-    const int64_t n = (int64_t) padded.size(), frames = n / hop_;
+    padded.resize((size_t) n, 0.0f);
     Graph g;
     Layers l{g, m_};
     std::vector<std::pair<std::string, ggml_tensor *>> kept;

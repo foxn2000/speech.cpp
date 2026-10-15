@@ -146,6 +146,8 @@ void make_voice_file(const std::string & model_path, const std::vector<VoiceSour
     const Prompt prompt(*model);
     const int most = model->size("drama3.generation.speakers");
     std::vector<VoiceReference> references;
+    // Each recording's audio by the index of its reference, encoded once the references are known to fit a prompt.
+    std::vector<std::pair<size_t, std::vector<float>>> recordings;
     for (size_t i = 0; i < sources.size(); i++) {
         const VoiceSource & s = sources[i];
         if (s.voice_file) {
@@ -171,12 +173,14 @@ void make_voice_file(const std::string & model_path, const std::vector<VoiceSour
         if (s.transcript->find("<|speaker") != std::string::npos) {
             throw Error(Fault::InvalidArgument, what + " holds a speaker tag; give the recording's speaker as its number instead", "transcript");
         }
-        const std::vector<float> audio = naming("references", [&] { return read_recording(s.path, codec.sample_rate()); });
+        std::vector<float> audio = naming("references", [&] { return read_recording(s.path, codec.sample_rate()); });
+        if (audio.empty()) throw Error(Fault::InvalidArgument, s.path + " holds no audio; give a recording of the speaker", "references");
         VoiceReference r;
         r.speaker = s.speaker.value_or(0);
         r.transcript = *s.transcript;
-        r.codes = codec.encode(audio);
-        r.frames = (int64_t) r.codes.size() / codec.codebooks();
+        r.frames = codec.frames(audio.size());
+        r.codes.assign((size_t) (r.frames * codec.codebooks()), 0);
+        recordings.push_back({references.size(), std::move(audio)});
         references.push_back(std::move(r));
     }
     for (const VoiceReference & r : references) {
@@ -184,13 +188,16 @@ void make_voice_file(const std::string & model_path, const std::vector<VoiceSour
             throw Error(Fault::OutOfRange, "the speaker " + std::to_string(r.speaker) + " is past the model's, 0 to " + std::to_string(most - 1), "speaker");
         }
     }
-    // The references and the shortest text must fit a prompt.
+    // The references and the shortest text must fit a prompt, which counts the frames of a recording before its codes
+    // stand in place of the zeros. It bounds what the codec is given: the graph of a recording of 1,000 s outgrows
+    // ggml's context and aborts.
     try {
         prompt.rows(".", voice_of(references).references, {});
     } catch (const Error & e) {
         if (e.fault() != Fault::OutOfRange) throw;
         throw Error(Fault::OutOfRange, "the references leave a prompt no room for a text; give shorter references", "references");
     }
+    for (auto & [at, audio] : recordings) references[at].codes = codec.encode(audio);
     write_voice_file(voice_path, references, model->str("drama3.codec.sha256"), device_kind(backend));
 }
 

@@ -13,7 +13,7 @@ struct Wav {
     std::vector<float> mono() const;
 };
 
-/** Reads 16-, 24- or 32-bit integer PCM or 32-bit float WAVE; anything else throws. */
+/** Reads 16-, 24- or 32-bit integer PCM or 32-bit float WAVE; anything else, and a float sample that is not finite, throws. */
 Wav read_wav(const std::string & path);
 
 /** The same for a WAVE file's bytes, which `path` names in a message. */

@@ -129,7 +129,8 @@ assert all(info.get(m) == meta["meta"].get("general." + m) for m in identity), {
 source = info["source"]
 assert meta["meta"]["general.source.repo_url"] == source["repository"], source
 assert meta["meta"]["general.source.url"] == f"{source['repository']}/tree/{source['revision']}", source
-assert {0: "F32", 1: "F16", 7: "Q8_0"}[meta["meta"]["general.file_type"]] == info["weight_type"], info["weight_type"]
+# general.file_type of each weight type speech.cpp writes, as gguf-py's LlamaFileType numbers it.
+assert {0: "F32", 1: "F16", 7: "Q8_0", 18: "Q6_K", 16: "Q5_K", 14: "Q4_K"}[meta["meta"]["general.file_type"]] == info["weight_type"], info["weight_type"]
 text = run("info", model, "--meta").stdout.decode()
 assert text.splitlines()[0] == info["name"] and f"general.architecture = \"{info['architecture']}\"" in text, text[:300]
 shown = [info[m] for m in identity if m in info] + [source["repository"], source["revision"], info["weight_type"]]

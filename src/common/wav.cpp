@@ -83,6 +83,10 @@ Wav parse_wav(const std::string & file, const std::string & path) {
         const uint8_t * p = data + i * width;
         if (ieee) {
             std::memcpy(&wav.samples[i], p, 4);
+            if (!std::isfinite(wav.samples[i])) {
+                throw Error(Fault::File, path + " holds a sample that is not a finite number, sample " + std::to_string(i) +
+                                             "; write the recording again from its source");
+            }
         } else if (bits == 16) {
             wav.samples[i] = (float) (int16_t) u16(p) / 32768.0f;
         } else if (bits == 24) {

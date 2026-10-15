@@ -46,8 +46,9 @@ struct VoiceSource {
  * Makes the voice file at `voice_path` for the model file at `model_path`, reading only the codec from it and encoding
  * each recording on `backend`: a recording, mixed to mono and resampled to the codec's rate, with its transcript, as
  * speaker 0 unless it is given another; a voice file's references as they are, under the speaker given where the file
- * has one speaker. A recording without a transcript, a transcript with a speaker tag or a token only the prompt writes,
- * a speaker past the model's, and references that leave a prompt no room for a text are refused.
+ * has one speaker. A recording without audio or without a transcript, a transcript with a speaker tag or a token only
+ * the prompt writes, a speaker past the model's, and references that leave a prompt no room for a text are refused
+ * before any recording is encoded.
  */
 void make_voice_file(const std::string & model_path, const std::vector<VoiceSource> & sources, const std::string & voice_path,
                      ggml_backend_t backend);

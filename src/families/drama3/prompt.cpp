@@ -43,8 +43,8 @@ size_t speaker_tag_at(const std::string & text, size_t at, std::string * digits 
 
 }  // namespace
 
-bool has_content(const std::string & text) {
-    const std::vector<uint32_t> cps = code_points(text, "text");
+bool has_content(const std::string & text, const std::string & input) {
+    const std::vector<uint32_t> cps = code_points(text, input);
     return std::any_of(cps.begin(), cps.end(), [](uint32_t c) { return !is_white_space(c); });
 }
 
@@ -95,7 +95,7 @@ void Prompt::append_codes(std::vector<int32_t> & rows, const Utterance & u) cons
 }
 
 void Prompt::check(const std::string & t, const std::string & input, const std::string & what) const {
-    if (!has_content(t)) throw Error(Fault::InvalidArgument, what + " is empty; give it words to speak", input);
+    if (!has_content(t, input)) throw Error(Fault::InvalidArgument, what + " is empty; give it words to speak", input);
     for (const std::string & token : reserved_) {
         if (t.find(token) != std::string::npos) {
             throw Error(Fault::InvalidArgument, what + " holds " + token + ", which only the prompt writes; take it out", input);
