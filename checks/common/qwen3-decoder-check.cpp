@@ -49,7 +49,9 @@ constexpr int kSteps = 16;
  * half precision, a cached row parted by 1.9e-2 at most, growing through the middle layers from 0 in the first two, and
  * the logits by 2.0e-3. Hiding from each block the position before it moved a cached row by 5.1e-1 or more on both, and
  * counting the positions after the first block from one too many by 3.1e-1 or more (2026-10-06). With flash attention
- * on that Metal, 3,665 rows of the 0.6B talker in blocks gave the same caches and logits as one block (2026-10-07).
+ * on that Metal, which runs a graph of many rows on the tensor API's kernel and a block of fewer on its simdgroup kernel,
+ * 1,064 rows of the 0.6B talker in blocks of 512 wrote cached rows 1.9e-3 at most from one block's and gave logits
+ * 1.3e-3 from them (2026-10-17).
  */
 constexpr double kCpuTolerance = 1e-4;
 constexpr double kGpuTolerance = 1e-1;

@@ -13,7 +13,7 @@ the DiT's feed-forward output, 3680, the speaker encoder's input, 128, and its f
 whole blocks of Q8_0's 32 either. Some weights reach operations that ggml runs from F16 or F32 alone: Qwen3-ASR's
 convolution kernels through `ggml_im2col()`, and FastConformer's through `ggml_conv_2d_direct()`,
 `ggml_conv_2d_dw_direct()` and `ggml_ssm_conv()`. The matrices and embeddings of every family are read by
-`ggml_mul_mat()` and `ggml_get_rows()` alone, which ggml v0.25.3 runs from every K-quant on the CPU, Metal and Vulkan
+`ggml_mul_mat()` and `ggml_get_rows()` alone, which ggml v0.27.0 runs from every K-quant on the CPU, Metal and Vulkan
 (each backend's `supports_op`).
 
 On the nine released models, ggml's Q8_0 and F16 are gguf-py's on every tensor, and `speech quantize` of each F32 file

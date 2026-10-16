@@ -50,6 +50,10 @@ The cache's layout depends on the attention: `read_cache()` gives keys and value
 Metal the decoder's error is smaller with flash attention: the prompt's logits of qwen3-asr-decoder-check from the
 dump's input lie 51.2 to 68.5 dB from transformers' with the 0.6B model in F32 (43.3 to 70.3 dB with the products) and
 50.1 to 73.2 dB with the 1.7B (46.6 to 67.1), every text from the audio and every teacher-forced argmax are the same
-with either attention in every type, and a prefill in blocks gives exactly what one graph gives. Forced on Metal, the
-two products still pass every decoder check with the same thresholds. Vulkan runs the same flash attention where its
+with either attention in every type. Where Metal runs flash attention without the tensor API, a prefill in blocks
+gives exactly what one graph gives. On the M5, M6, A19 and A20, ggml runs it through the tensor API where a graph's
+rows fill enough of the GPU and through its simdgroup kernel where they do not, so that the 1,064 rows of
+qwen3-decoder-check's prefill give the same caches and logits in blocks of 512 as in one graph up to 1.9e-3 and 1.3e-3
+in relative error on an Apple M5, as the two products' rounding gives (2026-10-17). Forced on Metal, the two products
+still pass every decoder check with the same thresholds. Vulkan runs the same flash attention where its
 device has the subgroup operations ggml's needs; its speed there has not been measured against the products.
