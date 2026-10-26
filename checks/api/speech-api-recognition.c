@@ -1,18 +1,20 @@
 /*
  * The recognition half of speech-api-check: the C API with a recognition model, through the shared libspeech. Loads the
- * model without a warm-up, compares the information read without loading with the loaded model's, refuses each
- * option's values with the category and the option's name, recognizes the audio of each dump of
- * reference/fastconformer/dump.py or reference/qwen3-asr/dump.py and compares the text with the dump's text byte for
- * byte and the languages with the one qwen-asr parsed, by its tag, or with none for a dump of FastConformer, which
- * writes no language, gives each its tokens and segments with their times where the model takes timestamps,
- * recognizes the audio of each dump with the dump's text as its draft where the model takes one and compares the text,
- * recognizes each other request of a Qwen3-ASR dump, with its language forced and with its prompt, recognizes the
- * audio with each decoding other than the model's default and compares the text and the languages with those in the
- * dump's folder of the decoding's name, which reference/fastconformer/dump.py --greedy writes for an RNN-T's greedy
- * decoding, recognizes the audio with each decoding and decode_on_cpu the other way than the model's default where it
- * takes it and compares the text with the dump's of the decoding, recognizes audio at three times the model's rate,
- * refuses what a recognition cannot take and runs a request it refused before its work again, reports and stops on
- * progress, and cancels a request from another thread while it runs, its result then without text or language.
+ * model without a warm-up, compares the information read without loading with the loaded model's, refuses each option's
+ * values with the category and the option's name, recognizes the audio of each dump of reference/fastconformer/dump.py
+ * or reference/qwen3-asr/dump.py and compares the text with the dump's text byte for byte, the stop with the dump's, at
+ * the model's limit where qwen-asr's decoding of a part reached max_new_tokens, and the languages with the one qwen-asr
+ * parsed, or those it merged from the parts of an input it split, by their tags, or with none for a dump of
+ * FastConformer, which writes no language, gives each its tokens and segments with their times where the model takes
+ * timestamps, recognizes the audio of each dump with the dump's text as its draft where the model takes one and
+ * compares the text, recognizes each other request of a Qwen3-ASR dump of an input qwen-asr did not split, with its
+ * language forced and with its prompt, recognizes the audio with each decoding other than the model's default and
+ * compares the text and the languages with those in the dump's folder of the decoding's name, which
+ * reference/fastconformer/dump.py --greedy writes for an RNN-T's greedy decoding, recognizes the audio with each
+ * decoding and decode_on_cpu the other way than the model's default where it takes it and compares the text with the
+ * dump's of the decoding, recognizes audio at three times the model's rate, refuses what a recognition cannot take and
+ * runs a request it refused before its work again, reports and stops on progress, and cancels a request from another
+ * thread while it runs, its result then without text or language.
  */
 
 #include <stdlib.h>
@@ -215,28 +217,77 @@ static const char * meta_of(const speech_model_info * info, const char * key) {
     return NULL;
 }
 
-/**
- * The language qwen-asr parsed for the request in `folder`, its meta.json's parsed_language, as the tag of the model's
- * language that qwen3-asr.language_names names so, "" for none and for a dump of reference/fastconformer/dump.py, which
- * has none; the caller frees it. NULL when the name is none of the model's.
- */
-static char * dump_languages(const speech_model_info * info, const char * folder) {
+/** The string member `key` of the meta.json in `folder`, which the caller frees, or NULL as json_string_member() gives it. */
+static char * meta_member(const char * folder, const char * key) {
     char path[4096 + 16];
     size_t size = 0;
     snprintf(path, sizeof path, "%s/meta.json", folder);
     char * meta = read_whole(path, &size);
-    char * name = meta ? json_string_member(meta, "parsed_language") : NULL;
+    char * out = meta ? json_string_member(meta, key) : NULL;
     free(meta);
-    const char * names = meta_of(info, "qwen3-asr.language_names");
-    const int at = name && name[0] && names ? index_in_array(names, name) : -1;
-    const char * tag = at >= 0 ? speech_model_info_language(info, (size_t) at) : "";
-    char * out = NULL;
-    if (!name || !name[0] || at >= 0) {
-        out = (char *) malloc(strlen(tag) + 1);
-        strcpy(out, tag);
-    }
-    free(name);
     return out;
+}
+
+/**
+ * Whether `dump` is one of reference/qwen3-asr/dump.py of an input that qwen-asr split, which holds its split.npy and
+ * the request without options alone: under auto/, the texts of the parts joined and their languages merged as
+ * transcribe() merges them, its meta.json's language, and each part's request under auto/part<k>/.
+ */
+static int split_dump(const char * dump) {
+    char path[4096 + 16];
+    snprintf(path, sizeof path, "%s/split.npy", dump);
+    return exists(path);
+}
+
+/**
+ * The languages qwen-asr gave the request in `folder`, the names joined with commas under `key` in its meta.json, as
+ * the tags of the model's languages that qwen3-asr.language_names names so, joined with commas: "" for none and for a
+ * dump of reference/fastconformer/dump.py, which has none; the caller frees it. NULL when a name is none of the model's.
+ */
+static char * dump_languages(const speech_model_info * info, const char * folder, const char * key) {
+    char * names = meta_member(folder, key);
+    const char * known = meta_of(info, "qwen3-asr.language_names");
+    char * out = (char *) calloc(names ? 4 * strlen(names) + 1 : 1, 1);
+    for (char * name = names && names[0] ? names : NULL; name && out;) {
+        char * comma = strchr(name, ',');
+        if (comma) *comma = '\0';
+        const int at = known ? index_in_array(known, name) : -1;
+        if (at < 0) {
+            free(out);
+            out = NULL;
+        } else {
+            if (out[0]) strcat(out, ",");
+            strcat(out, speech_model_info_language(info, (size_t) at));
+        }
+        name = comma ? comma + 1 : NULL;
+    }
+    free(names);
+    return out;
+}
+
+/** Whether qwen-asr's decoding of the request in `folder` stopped at max_new_tokens, as its meta.json's stop says. */
+static int stopped_at_limit(const char * folder) {
+    char * stop = meta_member(folder, "stop");
+    const int limited = stop && !strcmp(stop, "max_new_tokens");
+    free(stop);
+    return limited;
+}
+
+/**
+ * The stop of the dump's request in `folder`: the model's limit where qwen-asr's decoding stopped at max_new_tokens, or,
+ * for the request of a split dump, where any part's did, and complete otherwise and for a dump of
+ * reference/fastconformer/dump.py, which has no stop.
+ */
+static speech_stop dump_stop(const char * folder, int split) {
+    int limited = !split && stopped_at_limit(folder);
+    for (int k = 0; split; k++) {
+        char part[4096 + 16], meta[4096 + 32];
+        snprintf(part, sizeof part, "%s/part%d", folder, k);
+        snprintf(meta, sizeof meta, "%s/meta.json", part);
+        if (!exists(meta)) break;
+        limited = limited || stopped_at_limit(part);
+    }
+    return limited ? SPEECH_STOP_MODEL_LIMIT : SPEECH_STOP_COMPLETE;
 }
 
 static int ignore_audio(const float * samples, size_t n, void * user_data) {
@@ -372,7 +423,9 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
             fprintf(stderr, "FAIL: %s has no audio.npy of float32 samples or no text.txt\n", dumps[d]);
             return 1;
         }
-        char * text = NULL, * languages = NULL, * want_languages = dump_languages(info, folder);
+        const int split = split_dump(dumps[d]);
+        char * text = NULL, * languages = NULL, * want_languages = dump_languages(info, folder, split ? "language" : "parsed_language");
+        const speech_stop want_stop = dump_stop(folder, split);
         Progress progress;
         memset(&progress, 0, sizeof progress);
         const double start = now_seconds();
@@ -382,10 +435,11 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
             return 1;
         }
         if (recognize(model, audio[d], n, rate, plain, &progress, &text, &languages, &stop) != SPEECH_OK) return fail("speech_transcribe");
-        const int equal = !strcmp(text, texts[d]) && stop == SPEECH_STOP_COMPLETE, same_languages = !strcmp(languages, want_languages);
-        printf("%s: %.2f s of audio in %.3f s, text %s, languages %s (%s)\n", dumps[d], (double) n / rate, now_seconds() - start,
-               equal ? "equal to the dump's" : "DIFFERS", same_languages ? "the dump's" : "DIFFER", languages[0] ? languages : "none");
-        if (!equal) printf("  got  %s (%s)\n  want %s (complete)\n", text, speech_stop_name(stop), texts[d]);
+        const int equal = !strcmp(text, texts[d]) && stop == want_stop, same_languages = !strcmp(languages, want_languages);
+        printf("%s: %.2f s of audio in %.3f s, text %s, stop %s, languages %s (%s)\n", dumps[d], (double) n / rate, now_seconds() - start,
+               equal ? "equal to the dump's" : "DIFFERS", speech_stop_name(stop), same_languages ? "the dump's" : "DIFFER",
+               languages[0] ? languages : "none");
+        if (!equal) printf("  got  %s (%s)\n  want %s (%s)\n", text, speech_stop_name(stop), texts[d], speech_stop_name(want_stop));
         if (!same_languages) printf("  got the languages \"%s\" where qwen-asr parsed \"%s\"\n", languages, want_languages);
         ok = ok && equal && same_languages && progress_rises(&progress, 1, "the recognition");
         free(text);
@@ -402,9 +456,10 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
             ok = ok && same;
             free(text);
         }
-        // The other requests of a dump of reference/qwen3-asr/dump.py: its language forced, its prompt, and both.
+        // The other requests of a dump of reference/qwen3-asr/dump.py of an input it did not split: its language forced,
+        // its prompt, and both.
         static const char * const others[] = {"forced", "auto-prompt", "forced-prompt"};
-        for (size_t k = 0; strcmp(folder, dumps[d]) != 0 && k < sizeof others / sizeof others[0]; k++) {
+        for (size_t k = 0; strcmp(folder, dumps[d]) != 0 && !split && k < sizeof others / sizeof others[0]; k++) {
             char request[4096], file[4096 + 16];
             request_folder(dumps[d], others[k], request, sizeof request);
             snprintf(file, sizeof file, "%s/meta.json", request);
@@ -416,7 +471,7 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
             const int at = name && names ? index_in_array(names, name) : -1;
             Asked asked = {timestamps, at >= 0 ? speech_model_info_language(info, (size_t) at) : NULL, prompt && prompt[0] ? prompt : NULL,
                            NULL, -1};
-            char * languages = NULL, * want_languages = dump_languages(info, request);
+            char * languages = NULL, * want_languages = dump_languages(info, request, "parsed_language");
             if (!want || !prompt || (name && at < 0) || !want_languages ||
                 recognize(model, audio[d], n, rate, asked, NULL, &text, &languages, NULL) != SPEECH_OK) {
                 fprintf(stderr, "FAIL: %s: the request cannot be read or recognized\n", request);
@@ -443,7 +498,7 @@ static int check_loaded(speech_model * model, const char * model_path, const cha
             char request[4096], file[4096 + 16];
             snprintf(request, sizeof request, "%s/%s", dumps[d], decoding);
             snprintf(file, sizeof file, "%s/text.txt", request);
-            char * want = read_whole(file, &text_size), * languages = NULL, * want_languages = dump_languages(info, request);
+            char * want = read_whole(file, &text_size), * languages = NULL, * want_languages = dump_languages(info, request, "parsed_language");
             const Asked asked = {timestamps, NULL, NULL, decoding, -1};
             if (!want || !want_languages || recognize(model, audio[d], n, rate, asked, NULL, &text, &languages, NULL) != SPEECH_OK) {
                 fprintf(stderr, "FAIL: %s: no text.txt, or the audio cannot be recognized with the decoding %s\n", dumps[d], decoding);
