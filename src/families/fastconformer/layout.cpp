@@ -76,12 +76,15 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
         m.size(p + "decoder.rnnt.max_symbols");
     }
     const int prediction_layers = m.count(p + "decoder.prediction_layers");
+    const std::string prediction = m.one_of(p + "decoder.prediction", {"lstm", "kda"});
     m.str_array(p + "segment.separators");
     m.str_array(p + "segment.breaks");
     require(m.str_array(p + "tokenizer.tokens").size() == blank, m, "the blank does not follow the last of fastconformer.tokenizer.tokens");
     require(m.u32(p + "tokenizer.unknown_id") < blank, m, "fastconformer.tokenizer.unknown_id is not a piece");
     m.str(p + "tokenizer.unknown_surface");
     m.boolean(p + "tokenizer.strip_leading_space");
+    m.boolean(p + "tokenizer.remove_extra_whitespaces");
+    m.boolean(p + "tokenizer.byte_fallback");
     m.str_array(p + "tokenizer.punctuation");
 
     // The window's length and the widths of the subsampling's channels, the feed-forward layers, the prediction network
@@ -135,27 +138,63 @@ std::vector<TensorSpec> tensors(const ModelFile & m) {
                       {"attn_v.bias", {d}, kF32},      {"attn_out.bias", {d}, kF32},   {"conv_pw1_a.bias", {d}, kF32},
                       {"conv_pw1_gate.bias", {d}, kF32}, {"conv_pw2.bias", {d}, kF32}});
     }
-    // An LSTM layer's four gates, input, forget, cell and output, are stacked in its matrices and its summed biases.
-    add_numbered(t, "pred.lstm.", prediction_layers,
-                 {{"ih.weight", {predicted, 4 * predicted}, kMatrix}, {"hh.weight", {predicted, 4 * predicted}, kMatrix},
-                  {"bias", {4 * predicted}, kF32}});
+    if (prediction == "lstm") {
+        // An LSTM layer's four gates, input, forget, cell and output, are stacked in its matrices and its summed biases.
+        add_numbered(t, "pred.lstm.", prediction_layers,
+                     {{"ih.weight", {predicted, 4 * predicted}, kMatrix}, {"hh.weight", {predicted, 4 * predicted}, kMatrix},
+                      {"bias", {4 * predicted}, kF32}});
+    } else {
+        const int h = m.size(p + "decoder.kda.num_heads");
+        for (const char * key : {"norm_eps", "gate_norm_eps", "qk_norm_eps"}) {
+            const float eps = m.f32(p + "decoder.kda." + key);
+            require(std::isfinite(eps) && eps > 0, m, p + "decoder.kda." + key + " is not finite and positive");
+        }
+        const int64_t kh = m.width("pred.kda.0.q.weight", 1), w = m.width("pred.kda.0.q_conv.weight", 0);
+        const int64_t r = m.width("pred.kda.0.f_down.weight", 1), hd = kh / h;
+        require(kh % h == 0 && (hd == 32 || hd == 64 || hd == 128), m,
+                "pred.kda.0.q.weight does not give a KDA head width of 32, 64 or 128");
+        require(w >= 2, m, "pred.kda.0.q_conv.weight has fewer than two convolution inputs");
+        add_numbered(t, "pred.kda.", prediction_layers,
+                     {{"norm.weight", {predicted}, kF32}, {"norm.bias", {predicted}, kF32},
+                      {"q.weight", {predicted, kh}, kMatrix}, {"k.weight", {predicted, kh}, kMatrix},
+                      {"v.weight", {predicted, kh}, kMatrix},
+                      {"q_conv.weight", {w, kh}, kF32}, {"k_conv.weight", {w, kh}, kF32}, {"v_conv.weight", {w, kh}, kF32},
+                      {"f_down.weight", {predicted, r}, kMatrix}, {"f_up.weight", {r, kh}, kMatrix},
+                      {"a_log", {h}, kF32}, {"dt_bias", {kh}, kF32}, {"beta.weight", {predicted, h}, kMatrix},
+                      {"g_down.weight", {predicted, r}, kMatrix}, {"g_up.weight", {r, kh}, kMatrix}, {"g_up.bias", {kh}, kF32},
+                      {"out_norm.weight", {hd}, kF32}, {"out.weight", {kh, predicted}, kMatrix}});
+        add_block(t, "pred.norm.", {{"weight", {predicted}, kF32}, {"bias", {predicted}, kF32}});
+    }
     return t;
 }
 
-/**
- * Brings layout 1, the one before, up: layout 2 adds fastconformer.decoder.rnnt.max_symbols, the most tokens greedy
- * RNN-T decoding emits on one frame. Layout 1's converter took one RNN-T checkpoint, reazonspeech-nemo-v2, whose
- * decoding.greedy.max_symbols is 10.
- */
+/** Brings layouts 1 and 2 up with their LSTM prediction and tokenizer without byte fallback. */
 void upgrade(ModelFile & m) {
-    if (m.one_of("fastconformer.decoder.kind", {"tdt", "rnnt"}) == "tdt") return;
-    require(m.str("general.name") == "reazonspeech-nemo-v2", m, "it is an RNN-T model of layout 1 other than reazonspeech-nemo-v2");
-    m.upgrade_u32("fastconformer.decoder.rnnt.max_symbols", 10);
+    const std::string name = m.str("general.name");
+    // The pinned tokenizers' normalizer_spec sets remove_extra_whitespaces for parakeet-ja and ReazonSpeech only.
+    const struct { const char * name; bool remove_extra_whitespaces; } legacy[] = {
+        {"parakeet-tdt_ctc-0.6b-ja", true}, {"reazonspeech-nemo-v2", true}, {"parakeet-tdt-0.6b-v3", false}};
+    const bool * remove_extra = nullptr;
+    std::string names;
+    for (const auto & model : legacy) {
+        if (!names.empty()) names += ", ";
+        names += model.name;
+        if (name == model.name) remove_extra = &model.remove_extra_whitespaces;
+    }
+    require(remove_extra != nullptr, m, "it is a model of layout " + std::to_string(m.layout_version()) + " other than " + names);
+    m.upgrade_bool("fastconformer.tokenizer.remove_extra_whitespaces", *remove_extra);
+    if (m.layout_version() == 1 && m.one_of("fastconformer.decoder.kind", {"tdt", "rnnt"}) == "rnnt") {
+        // Layout 1's converter takes one RNN-T checkpoint, reazonspeech-nemo-v2, whose decoding.greedy.max_symbols is 10.
+        require(name == "reazonspeech-nemo-v2", m, "it is an RNN-T model of layout 1 other than reazonspeech-nemo-v2");
+        m.upgrade_u32("fastconformer.decoder.rnnt.max_symbols", 10);
+    }
+    m.upgrade_str("fastconformer.decoder.prediction", "lstm");
+    m.upgrade_bool("fastconformer.tokenizer.byte_fallback", false);
 }
 
 }  // namespace
 
-const Layout layout = {"fastconformer", 2,
+const Layout layout = {"fastconformer", 3,
                        "convert it again with reference/fastconformer/convert.py, or download it again from its Hugging Face "
                        "repository",
                        tensors, upgrade};

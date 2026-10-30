@@ -30,12 +30,12 @@ trimmed by VAD with a 0.2 s margin, reazonspeech-nemo-v2 in F16 on an Apple M5 (
 ## Decision
 
 - **A model decodes by default with the decoding `transcribe()` runs for it**, ported from NeMo and checked step by step
-  against it: greedy TDT for the parakeet models, ported from NeMo's label-looping decoder, and the beam search for
+  against it: greedy TDT for the parakeet models and Haas-ja-v1.0, ported from NeMo's label-looping decoder, and the beam search for
   reazonspeech-nemo-v2. A hybrid's CTC head is not converted, and there is no option to choose it.
 - **An RNN-T model also decodes greedily when a request asks**, through the option `decoding`, a string whose choices
   the model declares: reazonspeech-nemo-v2 takes `beam`, the default, and `greedy`. The choices name the decodings, not
   NeMo's strategies, two of which, `greedy_batch` and `greedy`, are one decoding. Only a model with a choice declares
-  the option; the parakeet models do not take it, as a model that cannot change its speed does not take `speed`. The
+  the option; the parakeet models and Haas do not take it, as a model that cannot change its speed does not take `speed`. The
   option has no neutral value, since each model's default is its own.
 - **Greedy decoding takes one graph per token.** The prediction network's output changes only when a token is emitted,
   so one graph computes the prediction for the last token and the joint at a run of frames from the current one, and
@@ -66,7 +66,7 @@ The alternatives were turned down:
 - A beam size as the option, greedy being a beam of 1. NeMo's beam search with a beam of 1 runs a greedy search of its
   own, not the decoding of the strategy `greedy_batch`, and beams of 2 and 3 have no dump to check them against.
 - A boolean `greedy`. It leaves no room for another decoding, and its false would misdescribe the parakeet models.
-- The parakeet models declaring `decoding` with `greedy` its one choice. It steers nothing, and no client sends a
+- The parakeet models or Haas declaring `decoding` with `greedy` its one choice. It steers nothing, and no client sends a
   decoding as a hint, as OpenAI's clients send a language.
 - The limit of 10 in the C++, NeMo's default as well as the checkpoint's. It is the checkpoint's setting, which another
   RNN-T checkpoint can set otherwise.

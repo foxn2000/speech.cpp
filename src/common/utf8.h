@@ -5,6 +5,9 @@
 #include <string>
 #include <vector>
 
+/** The length of the well-formed UTF-8 scalar at `s[i]`, or zero when there is none. */
+size_t utf8_scalar_length(const std::string & s, size_t i);
+
 /**
  * The code points of `s`, or nothing when `s` is not well-formed UTF-8 by the Unicode Standard's table 3-7, which
  * refuses overlong forms, surrogates and code points past U+10FFFF as Python's and Rust's decoders do.

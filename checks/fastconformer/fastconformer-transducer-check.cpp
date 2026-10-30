@@ -9,6 +9,7 @@
 //
 // usage: fastconformer-transducer-check <model.gguf> <reference out dir> [gpu|cpu|device name]
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -130,8 +131,7 @@ int main(int argc, char ** argv) {
                     const PredictionNetwork::Step step =
                         prediction.build(g, pred_labels.i32[n], parents[n] < 0 ? prediction.initial_state() : states[(size_t) parents[n]]);
                     g.output(step.output);
-                    g.output(step.h);
-                    g.output(step.c);
+                    for (auto * buffer : step.state) g.output(buffer);
                     g.compute(backend, allocr);
                     const std::vector<float> out = Graph::read(step.output);
                     outputs_got.insert(outputs_got.end(), out.begin(), out.end());

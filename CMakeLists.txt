@@ -106,6 +106,8 @@ add_library(fastconformer STATIC
     src/families/fastconformer/layout.cpp
     src/families/fastconformer/encoder.cpp
     src/families/fastconformer/transducer.cpp
+    src/families/fastconformer/lstm.cpp
+    src/families/fastconformer/kda.cpp
     src/families/fastconformer/decoder-step.cpp
     src/families/fastconformer/decoder.cpp
     src/families/fastconformer/tdt.cpp

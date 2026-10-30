@@ -5,11 +5,9 @@
 namespace fastconformer {
 
 /**
- * Layout 2 of a FastConformer model file, which reference/fastconformer/convert.py writes: the frontend's window and
- * filterbank, the subsampling, the conformer layers, the prediction network and the joint of a NeMo checkpoint with
- * the settings of the decoding transcribe() runs, for RNN-T also the limit of greedy decoding, and the SentencePiece
- * pieces, every key of fastconformer.* and speech.* that the family reads, and the tensors the keys call for. A file
- * of layout 1 reads as one of layout 2, an RNN-T file of it with reazonspeech-nemo-v2's limit of 10.
+ * Layout 3 holds the FastConformer frontend, encoder, LSTM or KDA prediction network, joint, decoding settings and
+ * SentencePiece vocabulary. Layouts 1 and 2 read with an LSTM and without byte fallback; layout 1's RNN-T also
+ * receives reazonspeech-nemo-v2's greedy limit of 10 symbols per frame.
  */
 extern const Layout layout;
 

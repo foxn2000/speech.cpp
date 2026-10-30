@@ -3,8 +3,9 @@
 ## Context
 
 A FastConformer recognition runs the encoder as one graph and then decodes: each step of greedy TDT, greedy RNN-T or
-the beam search is one small graph of the prediction network and the joint, four products of 2,560 by 640 with a
-vector, one of 640 by 640 and the joint's output layer, of up to 8,198 by 640, with a column or four. The beam search
+the beam search is one small graph of the prediction network and the joint. With the parakeet and ReazonSpeech LSTM
+networks it contains four products of 2,560 by 640 with a vector, one of 640 by 640 and the joint's output layer, of
+up to 8,198 by 640, with a column or four. Haas's KDA prediction network uses the same device-selection rule. The beam search
 computes one graph per step of its search, 638 for 25.5 s of audio; greedy decoding about one per token. On a GPU each
 graph is a round trip of about 0.3 ms on Metal and 0.6 to 0.7 ms on Vulkan.
 
@@ -95,7 +96,7 @@ NeMo's, and with the Q8_0 file the joined 311 s input comes out one word differe
 further, with each decoding. The beam search on that input then runs to its last step, 7,782 where Metal stops at
 4,889.
 
-A FastConformer model on a GPU takes the copy's 12 to 35 MB more of the host's memory once a request decodes on the
-CPU, and a recognition that decodes on the CPU occupies its threads while it decodes. A caller that wants the CPU free or the
+For the parakeet and ReazonSpeech files measured here, the CPU copy adds 12 to 35 MB of host memory once a request
+decodes there. A recognition that decodes on the CPU occupies its threads while it decodes. A caller that wants the CPU free or the
 GPU's arithmetic sets `decode_on_cpu` to false; one whose CPU decodes F16 weights faster than its GPU's round trip, as
 the M5 does, can set it to true.

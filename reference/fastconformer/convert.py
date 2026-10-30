@@ -2,13 +2,18 @@
 
 usage: uv run python convert.py <model> <out dir>
 
-Writes parakeet-tdt_ctc-0.6B-ja-F32.gguf, parakeet-tdt-0.6B-v3-F32.gguf or reazonspeech-nemo-619M-v2-F32.gguf, named
-under GGUF's naming convention, in layout 2: the frontend's window and mel filterbank, the subsampling, the conformer
-layers, the prediction network and the joint, with the SentencePiece pieces the token ids name, the settings of the
+Writes a file named under GGUF's naming convention, including Haas-0.6B-ja-v1.0-F32.gguf, in layout 3: the frontend's
+window and mel filterbank, the subsampling, the conformer layers, the LSTM or Kimi Delta Attention (KDA) prediction
+network and the joint, with the SentencePiece pieces and byte-fallback setting the token ids use, the settings of the
 decoding transcribe() runs (greedy TDT's durations and limit, or the beam and length of RNN-T's alignment-length
 synchronous beam search) and, for RNN-T, the limit of the greedy decoding NeMo also runs on it, every other constant the
 C++ reads and the model's identity in the GGUF specification's general keys. A hybrid checkpoint's CTC head is left out,
 since NeMo decodes with its transducer.
+
+The tokenizer's normalizer_spec.remove_extra_whitespaces is stored separately from strip_leading_space, which is
+add_dummy_prefix or remove_extra_whitespaces. When prefix stripping is enabled, remove_extra_whitespaces controls
+whether a leading space marker is stripped while the text is empty or only from the first piece, including when
+byte fallback supplies the first pieces.
 
 Tensor shapes follow ggml, whose ne[0] is the last numpy axis: a Linear weight [out, in] is stored as is
 (ne = [in, out]). Every tensor is written in float32; `speech quantize` makes the other weight types of the file, each
@@ -20,6 +25,7 @@ and fastconformer.encoder.use_bias says so.
 
 import argparse
 import os
+import re
 
 import numpy as np
 from gguf import GGUFValueType, GGUFWriter, LlamaFileType, naming_convention, size_label
@@ -33,22 +39,29 @@ from pins import MODELS, restore
 ARCH = "fastconformer"
 # Each layout this converter has written, with the first release of speech.cpp whose reader takes it; it writes the
 # last.
-RELEASES = {1: "0.7.0", 2: "0.8.0"}
+RELEASES = {1: "0.7.0", 2: "0.8.0", 3: "0.9.3"}
 LAYOUT = max(RELEASES)
 # The ISO 639 two-letter codes of the languages each checkpoint transcribes, from its model card, which requests give as
 # BCP 47 tags. None takes a language: parakeet-tdt-0.6b-v3 finds the language of the audio itself.
 LANGUAGES = {
+    "Haas-ja-v1.0": ["ja"],
     "parakeet-tdt_ctc-0.6b-ja": ["ja"],
     "reazonspeech-nemo-v2": ["ja"],
     "parakeet-tdt-0.6b-v3": ["en", "es", "fr", "de", "bg", "hr", "cs", "da", "nl", "et", "fi", "el", "hu", "it", "lv",
                              "lt", "mt", "pl", "pt", "ro", "sk", "sl", "sv", "ru", "uk"],
 }
 # The SPDX identifier of each checkpoint's license, from its model card.
-LICENSES = {"parakeet-tdt_ctc-0.6b-ja": "CC-BY-4.0", "parakeet-tdt-0.6b-v3": "CC-BY-4.0", "reazonspeech-nemo-v2": "Apache-2.0"}
+LICENSES = {
+    "Haas-ja-v1.0": "Apache-2.0",
+    "parakeet-tdt_ctc-0.6b-ja": "CC-BY-4.0",
+    "parakeet-tdt-0.6b-v3": "CC-BY-4.0",
+    "reazonspeech-nemo-v2": "Apache-2.0",
+}
 # The parts of each model's name under GGUF's naming convention (ggml's docs/gguf.md): its line, its size where the name
 # gives one, what it was trained toward (ja, the language of parakeet-tdt_ctc-0.6b-ja) and its version. Where the name
 # gives no size, the size label is counted from the parameters of the file's tensors.
 NAMES = {
+    "Haas-ja-v1.0": {"basename": "Haas", "size_label": "0.6B", "finetune": "ja", "version": "v1.0"},
     "parakeet-tdt_ctc-0.6b-ja": {"basename": "parakeet-tdt_ctc", "size_label": "0.6B", "finetune": "ja", "version": None},
     "parakeet-tdt-0.6b-v3": {"basename": "parakeet-tdt", "size_label": "0.6B", "finetune": None, "version": "v3"},
     "reazonspeech-nemo-v2": {"basename": "reazonspeech-nemo", "size_label": None, "finetune": None, "version": "v2"},
@@ -128,9 +141,29 @@ else:
     assert isinstance(greedy_max_symbols, int) and greedy_max_symbols > 0, greedy_max_symbols
     durations = []
 assert dec.blank_as_pad and dec.blank_idx == decoding.blank_id and not dec.random_state_sampling
-# LSTMDropout is the plain LSTM rnn() makes without a normalization; its dropout is off in evaluation.
-assert type(dec.prediction.dec_rnn).__name__ == "LSTMDropout" and dec.prediction.dec_rnn.lstm.proj_size == 0
-assert dec.prediction.dec_rnn.lstm.bias and not dec.prediction.dec_rnn.lstm.bidirectional
+prednet = dec.prediction.dec_rnn
+if type(prednet).__name__ == "KDAPredictionNetwork":
+    prediction = "kda"
+    assert cfg.decoder.prednet.kda_final_norm and prednet.final_norm is not None
+    assert cfg.decoder.get("normalization_mode") is None
+    assert len(prednet.layers) == len(prednet.norms) == dec.pred_rnn_layers
+    for layer, norm in zip(prednet.layers, prednet.norms):
+        assert layer.num_v_heads == layer.num_heads == cfg.decoder.prednet.kda_num_heads
+        assert layer.head_v_dim == layer.head_k_dim == cfg.decoder.prednet.kda_head_dim
+        assert layer.expand_v == cfg.decoder.prednet.kda_expand_v == 1.0
+        assert layer.conv_size == cfg.decoder.prednet.kda_conv_size
+        assert layer.use_short_conv and not layer.conv_bias
+        assert not layer.allow_neg_eigval and not layer.safe_gate and layer.lower_bound is None
+        assert layer.o_norm.activation == "sigmoid"
+        assert norm.eps == prednet.final_norm.eps and layer.o_norm.eps == prednet.layers[0].o_norm.eps
+        assert all(conv.bias is None for conv in (layer.q_conv1d, layer.k_conv1d, layer.v_conv1d))
+        assert layer.key_dim == layer.value_dim == layer.num_heads * layer.head_k_dim
+        assert layer.f_proj[0].out_features == layer.g_proj[0].out_features == layer.head_v_dim
+else:
+    prediction = "lstm"
+    # LSTMDropout is the plain LSTM rnn() makes without a normalization; its dropout is off in evaluation.
+    assert type(prednet).__name__ == "LSTMDropout" and prednet.lstm.proj_size == 0
+    assert prednet.lstm.bias and not prednet.lstm.bidirectional
 assert not dec.is_adapter_available() and not joint.is_adapter_available()
 assert float(dec.prediction.embed.weight[dec.blank_idx].abs().max()) == 0
 assert joint.activation == "relu" and joint.temperature == 1.0
@@ -186,14 +219,33 @@ tokenizer = model.tokenizer
 assert not tokenizer.legacy
 proto = sentencepiece_model_pb2.ModelProto()
 proto.ParseFromString(tokenizer.tokenizer.serialized_model_proto())
-# Normal, user-defined and unknown pieces only: SentencePiece writes a user-defined piece (parakeet-tdt-0.6b-v3's
-# <|en|> and the other tags) as it writes a normal one, and the C++ detokenizer handles no control or byte pieces.
+# SentencePiece's byte fallback represents each byte exactly once, as <0x00> through <0xFF>.
+byte_fallback = bool(proto.trainer_spec.byte_fallback)
 allowed = (proto.SentencePiece.NORMAL, proto.SentencePiece.USER_DEFINED, proto.SentencePiece.UNKNOWN)
-assert all(p.type in allowed for p in proto.pieces)
+byte_pieces = []
+for piece in proto.pieces:
+    is_byte = piece.type == proto.SentencePiece.BYTE
+    assert bool(re.fullmatch(r"<0x[0-9A-Fa-f]{2}>", piece.piece)) == is_byte
+    if is_byte:
+        assert byte_fallback
+        byte_pieces.append(piece.piece)
+    else:
+        assert piece.type in allowed
+assert sorted(byte_pieces) == ([f"<0x{i:02X}>" for i in range(256)] if byte_fallback else [])
 assert not proto.trainer_spec.treat_whitespace_as_suffix
 blank = int(decoding.blank_id)
 assert blank == len(proto.pieces) == tokenizer.vocab_size
 w.add_string("fastconformer.decoder.kind", decoder)
+w.add_string("fastconformer.decoder.prediction", prediction)
+if prediction == "kda":
+    from kda import QK_NORM_EPS
+
+    # Haas's prednet configuration supplies the head count; its block and final LayerNorm share epsilon.
+    w.add_uint32("fastconformer.decoder.kda.num_heads", int(cfg.decoder.prednet.kda_num_heads))
+    w.add_float32("fastconformer.decoder.kda.norm_eps", float(prednet.final_norm.eps))
+    # FLA's output norm and q/k normalization use separate epsilons.
+    w.add_float32("fastconformer.decoder.kda.gate_norm_eps", float(prednet.layers[0].o_norm.eps))
+    w.add_float32("fastconformer.decoder.kda.qk_norm_eps", QK_NORM_EPS)
 w.add_uint32("fastconformer.decoder.blank_id", blank)
 w.add_uint32("fastconformer.decoder.prediction_layers", int(dec.pred_rnn_layers))
 if decoder == "tdt":
@@ -214,16 +266,15 @@ else:
 add_array("fastconformer.segment.separators", list(decoding.segment_seperators), GGUFValueType.STRING)
 unspaced = all(language in UNSPACED_LANGUAGES for language in LANGUAGES[args.model])
 add_array("fastconformer.segment.breaks", UNSPACED_BREAKS if unspaced else [], GGUFValueType.STRING)
+w.add_bool("fastconformer.tokenizer.byte_fallback", byte_fallback)
 add_array("fastconformer.tokenizer.tokens", [p.piece for p in proto.pieces], GGUFValueType.STRING)
 w.add_uint32("fastconformer.tokenizer.unknown_id", int(tokenizer.tokenizer.unk_id()))
 w.add_string("fastconformer.tokenizer.unknown_surface", proto.trainer_spec.unk_surface)
-# Whether SentencePiece's decoder drops the leading "▁" of each piece until the text is no longer empty, which it
-# does when either normalizer option is set.
+# SentencePiece strips a dummy leading "▁" when either normalizer option is set.
 w.add_bool("fastconformer.tokenizer.strip_leading_space",
            bool(proto.normalizer_spec.add_dummy_prefix or proto.normalizer_spec.remove_extra_whitespaces))
-# The marks before which the decoding removes one whitespace character. The C++ looks for a space only,
-# the one whitespace character a decoded text can hold when no piece holds another and the unknown surface
-# holds only spaces.
+w.add_bool("fastconformer.tokenizer.remove_extra_whitespaces", bool(proto.normalizer_spec.remove_extra_whitespaces))
+# Normal pieces hold no whitespace, and the unknown surface holds only spaces; BYTE pieces can supply Unicode whitespace.
 assert not any(c.isspace() for p in proto.pieces for c in p.piece)
 assert all(c == " " or not c.isspace() for c in proto.trainer_spec.unk_surface)
 add_array("fastconformer.tokenizer.punctuation", sorted(decoding.supported_punctuation or []), GGUFValueType.STRING)
@@ -296,14 +347,33 @@ for l in range(int(enc.n_layers)):
         add(o + "conv_pw2.bias", sd[a + "conv.pointwise_conv2.bias"])
     norm("norm_out", o + "out_norm")
 
-# The prediction network: an embedding of the tokens and the blank, then LSTM layers whose gates are stacked as
-# PyTorch stacks them, input, forget, cell and output.
 add("pred.embed.weight", sd["decoder.prediction.embed.weight"])
-for l in range(int(dec.pred_rnn_layers)):
-    r = "decoder.prediction.dec_rnn.lstm."
-    add(f"pred.lstm.{l}.ih.weight", sd[r + f"weight_ih_l{l}"])
-    add(f"pred.lstm.{l}.hh.weight", sd[r + f"weight_hh_l{l}"])
-    add(f"pred.lstm.{l}.bias", sd[r + f"bias_ih_l{l}"] + sd[r + f"bias_hh_l{l}"])
+if prediction == "lstm":
+    # PyTorch stacks the gates as input, forget, cell and output; its two biases are summed.
+    for l in range(int(dec.pred_rnn_layers)):
+        r = "decoder.prediction.dec_rnn.lstm."
+        add(f"pred.lstm.{l}.ih.weight", sd[r + f"weight_ih_l{l}"])
+        add(f"pred.lstm.{l}.hh.weight", sd[r + f"weight_hh_l{l}"])
+        add(f"pred.lstm.{l}.bias", sd[r + f"bias_ih_l{l}"] + sd[r + f"bias_hh_l{l}"])
+else:
+    # Haas prednet.py keeps the blocks, their pre-norms and final norm under dec_rnn.
+    r = "decoder.prediction.dec_rnn."
+    for l in range(int(dec.pred_rnn_layers)):
+        src, dst = r + f"layers.{l}.", f"pred.kda.{l}."
+        for suffix in ("weight", "bias"):
+            add(dst + "norm." + suffix, sd[r + f"norms.{l}." + suffix])
+        for name, source in (("q", "q_proj"), ("k", "k_proj"), ("v", "v_proj"),
+                             ("f_down", "f_proj.0"), ("f_up", "f_proj.1"), ("beta", "b_proj"),
+                             ("g_down", "g_proj.0"), ("g_up", "g_proj.1"),
+                             ("out_norm", "o_norm"), ("out", "o_proj")):
+            add(dst + name + ".weight", sd[src + source + ".weight"])
+        add(dst + "g_up.bias", sd[src + "g_proj.1.bias"])
+        for name in ("q", "k", "v"):
+            add(dst + name + "_conv.weight", sd[src + name + "_conv1d.weight"][:, 0, :])
+        add(dst + "a_log", sd[src + "A_log"])
+        add(dst + "dt_bias", sd[src + "dt_bias"])
+    for suffix in ("weight", "bias"):
+        add("pred.norm." + suffix, sd[r + "final_norm." + suffix])
 for x in ("enc", "pred"):
     add(f"joint.{x}.weight", sd[f"joint.{x}.weight"])
     add(f"joint.{x}.bias", sd[f"joint.{x}.bias"])

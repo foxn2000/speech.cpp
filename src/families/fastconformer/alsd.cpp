@@ -104,8 +104,7 @@ Decoding AlsdDecoder::decode(const std::vector<float> & projected, ggml_backend_
                 const Hypothesis & h = *active[j];
                 const PredictionNetwork::Step step = prediction_.build(g, h.labels.back(), h.from ? h.from->state : prediction_.initial_state());
                 g.output(step.output);
-                g.output(step.h);
-                g.output(step.c);
+                for (auto * buffer : step.state) g.output(buffer);
                 computed.emplace_back(j, step);
                 column = step.output;
             }

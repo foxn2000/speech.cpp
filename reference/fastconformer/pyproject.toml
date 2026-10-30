@@ -7,6 +7,8 @@ dependencies = [
   # The asr extra, since ASRModel.restore_from() needs Lightning, Hydra and SentencePiece, which asr-only
   # leaves out.
   "nemo-toolkit[asr]==3.0.0",
+  "haas-asr @ git+https://github.com/third-intelligence/Haas-ASR.git@61fce38857909185b02413655061eed79d0d6061",
+  "flash-linear-attention==0.5.2",
   "torch==2.10.0",
   "torchaudio==2.10.0",
   "numpy",
@@ -16,3 +18,5 @@ dependencies = [
 
 [tool.uv]
 package = false
+# Haas bounds NeMo below 2.8; this family checks its decoder against the existing 3.0.0 pin.
+override-dependencies = ["nemo-toolkit[asr]==3.0.0"]

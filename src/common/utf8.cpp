@@ -39,6 +39,13 @@ size_t sequence(const std::string & s, size_t i, bool & whole) {
 
 }  // namespace
 
+size_t utf8_scalar_length(const std::string & s, size_t i) {
+    if (i >= s.size()) return 0;
+    bool whole;
+    const size_t len = sequence(s, i, whole);
+    return whole ? len : 0;
+}
+
 std::optional<std::vector<uint32_t>> decode_utf8(const std::string & s) {
     std::vector<uint32_t> out;
     for (size_t i = 0; i < s.size();) {

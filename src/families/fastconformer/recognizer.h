@@ -85,7 +85,7 @@ public:
     const NemoFrontend & frontend() const { return frontend_; }
     const Encoder & encoder() const { return encoder_; }
     /** The prediction network and the joint on the model's device. */
-    const PredictionNetwork & prediction() const { return device_.prediction; }
+    const PredictionNetwork & prediction() const { return *device_.prediction; }
     const Joint & joint() const { return device_.joint; }
     /** The decoding of decodings() named `name` on the model's device. */
     const Decoder & decoder(const std::string & name) const { return device_.decoder(name); }
@@ -101,7 +101,7 @@ private:
         Transducer & operator=(const Transducer &) = delete;
         const Decoder & decoder(const std::string & name) const;
 
-        PredictionNetwork prediction;
+        std::unique_ptr<PredictionNetwork> prediction;
         Joint joint;
         const std::vector<std::string> & names;
         /** The decoders of `names`, in their order. */

@@ -1,7 +1,9 @@
 # FastConformer
 
 This page describes speech.cpp's port of NVIDIA NeMo's [FastConformer](https://arxiv.org/abs/2305.05084) recognizers:
-two parakeet models and ReazonSpeech, which write the text of a recording.
+the parakeet models, ReazonSpeech and Haas-ja-v1.0, which write the text of a recording.
+
+The catalog names fetch these files:
 
 | Name | Upstream | Languages | File |
 |---|---|---|---|
@@ -21,15 +23,33 @@ speech worker parakeet-tdt_ctc-0.6b-ja                             # a recogniti
 speech serve parakeet-tdt-0.6b-v3                                  # POST /v1/audio/transcriptions
 ```
 
+## Haas-ja-v1.0
+
+[third-intelligence/Haas-ja-v1.0](https://huggingface.co/third-intelligence/Haas-ja-v1.0) recognizes Japanese.
+Its converted GGUF files are not published on Hugging Face and it has no catalog name. Use a local converted file:
+
+```sh
+speech asr models/Haas-0.6B-ja-v1.0-F32.gguf utterance.wav
+speech asr models/Haas-0.6B-ja-v1.0-F32.gguf --timestamps utterance.wav
+speech asr models/Haas-0.6B-ja-v1.0-F32.gguf --vad silero-vad meeting.wav
+```
+
+A request uses greedy TDT decoding and recognizes its audio whole; `--vad` recognizes each region of speech
+separately. Haas attends over the whole request, so its encoder's memory grows with the square of the input length.
+Custom vocabulary boosting and splitting at quiet points are not supported.
+
+The F32 conversion can be written as F16, Q8_0, Q6_K, Q5_K or Q4_K with
+[speech quantize](../cli.md#speech-quantize).
+
 ## What it does
 
 - Each model writes the text NeMo's `transcribe()` writes by default: ReazonSpeech with a beam search, the parakeet models
-  with greedy decoding.
+  and Haas with greedy decoding.
 - A request is recognized whole, however long, but a stretch that holds several sentences loses whole sentences, as in
   NeMo itself: on minutes of Common Voice ja clips joined with pauses, reazonspeech-v2 dropped 522 of 600 and
   parakeet-ja 266. Recognize a long recording by the regions where someone speaks, with `--vad silero-vad` or
   `chunking_strategy` (the [record](../adr/transcription-by-regions-recognizes-each-region-where-someone-speaks-alone-in-the-tools-and-joins-the-texts.md)
-  has the measurement). ReazonSpeech's time and memory grow with the length; the parakeet models attend over the whole
+  has the measurement). ReazonSpeech's time and memory grow with the length; the parakeet models and Haas attend over the whole
   request, so theirs grow with its square.
 - parakeet-v3 finds the language of the audio itself. None of the models takes a language: a request's `language` is only
   checked against the model's languages.
@@ -75,7 +95,7 @@ parakeet-tdt-0.6b-v3's WER in F16 on 300 English utterances of FLEURS is 8.76% o
 
 ## Weight types
 
-Each model comes in five types; `NAME:TYPE` fetches one (`speech asr parakeet-tdt-0.6b-v3:q8_0`). speech-bench, two
+Each catalog model comes in five types; `NAME:TYPE` fetches one (`speech asr parakeet-tdt-0.6b-v3:q8_0`). speech-bench, two
 rounds, on an Apple M5 with Metal on 2026-10-16 and an RTX 2080 with Vulkan on 2026-10-14. The error is the CER on the first 500
 utterances of Common Voice 8.0's Japanese test set, on which the CER is higher than on the whole set, and after the
 slash the CER accepting other spellings of the same words; for parakeet-tdt-0.6b-v3 it is the WER on 300 English
@@ -116,5 +136,5 @@ is the seconds of audio over the seconds they took, so larger is faster.
 | reazonspeech-nemo-v2, greedy | Common Voice ja | 0.033 s / 0.043 s | 0.049 s / 0.083 s | 108 / 73 |
 | parakeet-tdt-0.6b-v3 | FLEURS en | 0.058 s / 0.095 s | 0.091 s / 0.125 s | 130 / 86 |
 
-A long recording is recognized whole. ReazonSpeech and parakeet-tdt_ctc-0.6b-ja use global attention, whose memory
+A long recording is recognized whole. ReazonSpeech, parakeet-tdt_ctc-0.6b-ja and Haas use global attention, whose memory
 grows with the square of the input length. Use `speech asr --vad silero-vad` to transcribe long recordings by region.

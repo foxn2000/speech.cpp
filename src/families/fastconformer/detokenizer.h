@@ -34,19 +34,20 @@ public:
     /**
      * Whether each token begins a word as get_words_offsets() tells it for a SentencePiece vocabulary: its piece
      * differs from its text decoded alone, as a piece with a leading "▁" and the unknown piece do, and it is not a
-     * punctuation mark, which NeMo adds to the word before it.
+     * punctuation mark, which NeMo adds to the word before it. BYTE pieces never begin a word.
      */
     std::vector<bool> word_starts(const std::vector<int32_t> & ids) const;
 
 private:
-    /** The piece of `id` as DecodeIds() writes it when the text before it is `empty` or not. */
-    std::string piece_text(int32_t id, bool empty) const;
+    /** Decodes one piece, stripping its leading space marker when `strip_space` and the tokenizer permit it. */
+    std::string piece_text(int32_t id, bool strip_space) const;
 
+    std::vector<int> bytes_;
     std::vector<std::string> pieces_;
     std::vector<std::string> punctuation_;
     int unknown_id_;
     std::string unknown_surface_;
-    bool strip_leading_space_;
+    bool strip_leading_space_, remove_extra_whitespaces_, byte_fallback_;
 };
 
 }  // namespace fastconformer

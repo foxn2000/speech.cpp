@@ -10,6 +10,13 @@ from nemo.collections.asr.models import ASRModel
 
 NEMO = importlib.metadata.version("nemo-toolkit")
 MODELS = {
+    "Haas-ja-v1.0": {
+        "repository": "third-intelligence/Haas-ja-v1.0",
+        "revision": "8a36fd5b1a69c75da25e016c5b81597c14a9a810",
+        "file": "Haas-ja-v1.0.nemo",
+        "size": 1232384000,
+        "sha256": "c6ed38698300a371a86eadab4b56d5458f47623f7fc4a5f1e938b5adbe8458aa",
+    },
     "parakeet-tdt_ctc-0.6b-ja": {
         "repository": "nvidia/parakeet-tdt_ctc-0.6b-ja",
         "revision": "44edb27eea9317daf89333e75eb830db4b1cc298",
@@ -52,5 +59,12 @@ def checkpoint(pin):
 def restore(pin):
     """The official model of a pinned checkpoint, on the CPU in float32 and in evaluation."""
     torch.set_grad_enabled(False)
+    if pin["repository"] == "third-intelligence/Haas-ja-v1.0":
+        import haas_asr._fla
+        from kda import KimiDeltaAttention
+
+        # prednet.py imports this loader; replace it before NeMo imports the checkpoint's decoder target.
+        haas_asr._fla.check_fla_version()
+        haas_asr._fla.load_kda_class = lambda: KimiDeltaAttention
     model = ASRModel.restore_from(checkpoint(pin), map_location="cpu")
     return model.float().eval()

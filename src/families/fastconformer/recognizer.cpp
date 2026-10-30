@@ -8,8 +8,8 @@
 
 namespace fastconformer {
 
-Recognizer::Transducer::Transducer(const ModelFile & m, const std::vector<std::string> & names) : prediction(m), joint(m), names(names) {
-    for (const std::string & name : names) decoders.push_back(make_decoder(m, prediction, joint, name));
+Recognizer::Transducer::Transducer(const ModelFile & m, const std::vector<std::string> & names) : prediction(make_prediction(m)), joint(m), names(names) {
+    for (const std::string & name : names) decoders.push_back(make_decoder(m, *prediction, joint, name));
 }
 
 const Decoder & Recognizer::Transducer::decoder(const std::string & name) const {

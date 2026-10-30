@@ -105,15 +105,20 @@ def row_key(x):
     return x.detach().contiguous().numpy().tobytes()
 
 
+def state_key(state, row):
+    """Packs one batch row's state, whether LSTM or Haas's recurrent and convolution components."""
+    return b"".join(row_key(component[:, row]) for component in state)
+
+
 def recording_predict(y, state, *a, **k):
-    out = predict(y, state, *a, **k)
     assert y.shape[1] == 1
-    for r in range(y.shape[0]):
-        # The state a row continues: none or zeros at the start of the sequence, else what an earlier row left.
-        parent = -1
-        if state is not None and any(bool(s[:, r].any()) for s in state):
-            parent = calls["states"][row_key(torch.cat([s[:, r] for s in state]))]
-        calls["states"].setdefault(row_key(torch.cat([s[:, r] for s in out[1]])), len(calls["pred"]))
+    # Haas's short convolutions can update views of the incoming state in place, so identify parents before predict().
+    parents = [calls["states"][state_key(state, r)]
+               if state is not None and any(bool(s[:, r].any()) for s in state) else -1
+               for r in range(y.shape[0])]
+    out = predict(y, state, *a, **k)
+    for r, parent in enumerate(parents):
+        calls["states"].setdefault(state_key(out[1], r), len(calls["pred"]))
         calls["pred"].append((int(y[r, 0]), parent, out[0][r, 0].clone()))
         calls["outputs"].setdefault(row_key(out[0][r, 0]), len(calls["pred"]) - 1)
     return out
@@ -142,8 +147,14 @@ def recording_joint(f, g):
     return out
 
 
-model.decoder.predict, model.joint.project_encoder, model.joint.project_prednet, model.joint.joint_after_projection = (
-    recording_predict, recording_project_encoder, recording_project_prednet, recording_joint)
+def record_decoding(enabled):
+    """Enable stage recording, or restore the original methods for an independent transcribe() call."""
+    methods = ((recording_predict, recording_project_encoder, recording_project_prednet, recording_joint) if enabled else
+               (predict, project_encoder, project_prednet, joint_after_projection))
+    model.decoder.predict, model.joint.project_encoder, model.joint.project_prednet, model.joint.joint_after_projection = methods
+
+
+record_decoding(True)
 
 
 def dump_stages(path):
@@ -175,6 +186,8 @@ def dump_stages(path):
     saved["encoded"] = encoded[0, :, :t].T
     assert torch.equal(saved["layers"][-1], saved["encoded"])
 
+    # The decoding reads only valid frames; the encoder can return additional padding frames.
+    encoded = encoded[:, :, :t]
     frames_of = {}
     for i in range(t):
         frames_of.setdefault(row_key(encoded[0, :, i]), i)
@@ -190,7 +203,11 @@ def dump_stages(path):
     saved["ids"] = np.array(ids, dtype=np.int32)
     text = hypothesis.text
     assert model.decoding.decode_tokens_to_str_with_strip_punctuation(ids) == text
-    official = model.transcribe([path], batch_size=1, verbose=False)[0].text
+    record_decoding(False)
+    try:
+        official = model.transcribe([path], batch_size=1, verbose=False)[0].text
+    finally:
+        record_decoding(True)
     assert text == official, f"the stages give {text!r}, transcribe() gives {official!r}"
 
     for key, value in saved.items():
@@ -347,8 +364,7 @@ def dump_greedy(dumps):
 # The times come from transcribe() as it runs without the recording wrappers, and after the stages of every file, since
 # transcribe(timestamps=True) changes the model's decoding for good.
 outs = [] if args.times or args.greedy else [dump_stages(path) for path in args.audio]
-model.decoder.predict, model.joint.project_encoder, model.joint.project_prednet, model.joint.joint_after_projection = (
-    predict, project_encoder, project_prednet, joint_after_projection)
+record_decoding(False)
 if args.times or args.greedy:
     root = os.path.join(args.out_dir, args.model)
     dumps = sorted(os.path.join(root, d) for d in os.listdir(root) if os.path.isfile(os.path.join(root, d, "audio.npy")))

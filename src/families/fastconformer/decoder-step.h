@@ -22,8 +22,7 @@ private:
     Graph graph_{512};
     std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator_{nullptr, ggml_gallocr_free};
     ggml_tensor * label_;
-    ggml_tensor * h_;
-    ggml_tensor * c_;
+    std::vector<ggml_tensor *> state_;
     ggml_tensor * frames_;
     ggml_tensor * predicted_;
     ggml_tensor * logits_;
